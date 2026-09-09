@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Editor
+.vscode/
+.idea/
+
+# Generados / temporales
+Thumbs.db
+desktop.ini
+
+# Relojes de prueba grandes generados por el corrector
+*_Einvertido.gcode
