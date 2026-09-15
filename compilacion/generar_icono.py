@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
 """
 generar_icono.py
-Genera build/icono.ico con el logo del Corrector G-Code (impresora de
-cemento): un cuadrado oscuro redondeado con tres capas impresas de colores.
+Genera build/icono.ico (Windows) y build/icono.icns (macOS) con el logo del
+Corrector G-Code (impresora de cemento): un cuadrado oscuro redondeado con
+tres capas impresas de colores.
 
-No usa dependencias externas: escribe el ICO a mano (bmp 32bpp con alfa).
+No usa dependencias externas: escribe el ICO a mano (bmp 32bpp con alfa) y
+el ICNS a mano (un bloque PNG 256x256; macOS genera el resto de medidas).
 """
 
 import struct
+import zlib
 from pathlib import Path
 
 ANCHO = 64
@@ -44,7 +47,8 @@ def _pintar_barra(x, y, margen_izq, margen_der, sup, inf, color, radio):
     return None
 
 
-def generar_ico(destino: Path):
+def _px_64():
+    """Dibuja el logo en una grilla 64x64 (BGRA)."""
     px = [[(0, 0, 0, 0) for _ in range(ANCHO)] for _ in range(ALTO)]
 
     for y in range(ALTO):
@@ -79,8 +83,57 @@ def generar_ico(destino: Path):
                 continue
             b, g, r = color
             px[y][x] = (b, g, r, 255)
+    return px
 
-    _guardar_ico(destino, px)
+
+def generar_ico(destino: Path):
+    _guardar_ico(destino, _px_64())
+
+
+def _escalar_vecino(px_64, nuevo=256):
+    """Escala la grilla 64x64 a nuevo x nuevo sin suavizar (vecino mas cercano)."""
+    factor = nuevo // ANCHO
+    px = [[(0, 0, 0, 0) for _ in range(nuevo)] for _ in range(nuevo)]
+    for y in range(nuevo):
+        fila = px[y]
+        for x in range(nuevo):
+            b, g, r, a = px_64[y // factor][x // factor]
+            if a:
+                fila[x] = (r, g, b, a)
+    return px
+
+
+def _png_bytes(px_rgba):
+    """Codifica una grilla RGBA como PNG (solo stdlib: zlib + struct)."""
+    alto = len(px_rgba)
+    ancho = len(px_rgba[0]) if alto else 0
+
+    def chunk(tipo, datos):
+        bloque = struct.pack(">I", len(datos)) + tipo + datos
+        return bloque + struct.pack(">I", zlib.crc32(tipo + datos) & 0xFFFFFFFF)
+
+    ihdr = struct.pack(">IIBBBBB", ancho, alto, 8, 6, 0, 0, 0)
+    raws = bytearray()
+    for fila in px_rgba:
+        raws.append(0)  # filtro None
+        for r, g, b, a in fila:
+            raws += bytes((r, g, b, a))
+    idat = zlib.compress(bytes(raws), 9)
+    return (b"\x89PNG\r\n\x1a\n"
+            + chunk(b"IHDR", ihdr)
+            + chunk(b"IDAT", idat)
+            + chunk(b"IEND", b""))
+
+
+def _icns_bytes(png):
+    """Arma un fichero ICNS con un solo bloque PNG 'ic08' (256x256)."""
+    bloque = struct.pack(">4sI", b"ic08", len(png) + 8) + png
+    return b"icns" + struct.pack(">I", len(bloque) + 8) + bloque
+
+
+def generar_icns(destino: Path):
+    """Genera build/icono.icns (macOS) a partir del mismo dibujo del .ico."""
+    destino.write_bytes(_icns_bytes(_png_bytes(_escalar_vecino(_px_64()))))
 
 
 def _guardar_ico(destino: Path, px):
@@ -117,7 +170,9 @@ def _guardar_ico(destino: Path, px):
 
 
 if __name__ == "__main__":
-    destino = Path(__file__).resolve().parent.parent / "build" / "icono.ico"
-    destino.parent.mkdir(parents=True, exist_ok=True)
-    generar_ico(destino)
-    print("[OK]  %s (%d bytes)" % (destino, destino.stat().st_size))
+    build = Path(__file__).resolve().parent.parent / "build"
+    build.mkdir(parents=True, exist_ok=True)
+    for destino, fn in (("icono.ico", generar_ico), ("icono.icns", generar_icns)):
+        archivo = build / destino
+        fn(archivo)
+        print("[OK]  %s (%d bytes)" % (archivo, archivo.stat().st_size))
