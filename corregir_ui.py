@@ -213,7 +213,7 @@ class CorrectorApp:
             style="Panel.TLabel",
             font=("Segoe UI", 8),
         ).pack(anchor="w", padx=12)
-        self.var_unir_rectas = tk.BooleanVar(value=False)
+        self.var_unir_rectas = tk.BooleanVar(value=True)
         ttk.Checkbutton(
             panel_opc,
             text="Unir rectas (G1 colineales)",
@@ -414,34 +414,23 @@ class CorrectorApp:
 
         e = reporte["eliminadas"]
         n_total = reporte["total_lineas"]
+        n_final = reporte["lineas_escritas"]
+        ahorro_total = n_total - n_final
         lineas = []
         lineas.append("PROCESADO OK")
         lineas.append("  Lineas totales:    %d" % n_total)
-        lineas.append("  Lineas escritas:   %d" % reporte["lineas_escritas"])
-        lineas.append("  Lineas eliminadas: %d" % len(e))
-        if reporte.get("relleno_removido"):
-            lineas.append(
-                "  Relleno quitado:    %d bloques / %d lineas"
-                % (reporte["bloques_relleno"], reporte["relleno_removido"])
-            )
-        if reporte.get("arcos_procesados"):
-            lineas.append(
-                "  Arcos G2/G3:        %d (curvas en plano XY)" % reporte["arcos_procesados"]
-            )
-        if reporte.get("arcos_soldados"):
-            lineas.append(
-                "  Arcos soldados:     %d (G1 -> G2/G3, %d lineas ahorradas)"
-                % (reporte["arcos_soldados"], reporte["lineas_ahorradas"])
-            )
-        if reporte.get("rectas_unidas"):
-            lineas.append(
-                "  Rectas unidas:      %d (G1 colineales colapsados, %d lineas ahorradas)"
-                % (reporte["rectas_unidas"], reporte["lineas_ahorradas_rectas"])
-            )
-        if reporte.get("invirtio_e"):
-            lineas.append(
-                "  E invertido:       %d lineas (M83 relativo)" % reporte["e_invertidos"]
-            )
+        lineas.append("  Lineas escritas:   %d   (se ahorraron %d)" % (n_final, ahorro_total))
+        lineas.append("  Lineas eliminadas: %d (comandos no usados)" % len(e))
+        lineas.append("  Relleno quitado:    %d bloques / %d lineas"
+                      % (reporte.get("bloques_relleno", 0), reporte.get("relleno_removido", 0)))
+        lineas.append("  Arcos G2/G3:        %d (curvas en plano XY)"
+                      % reporte.get("arcos_procesados", 0))
+        lineas.append("  Arcos soldados:     %d (G1 -> G2/G3, %d lineas ahorradas)"
+                      % (reporte.get("arcos_soldados", 0), reporte.get("lineas_ahorradas", 0)))
+        lineas.append("  Rectas unidas:      %d (G1 colineales colapsados, %d lineas ahorradas)"
+                      % (reporte.get("rectas_unidas", 0), reporte.get("lineas_ahorradas_rectas", 0)))
+        lineas.append("  E invertido:        %d lineas (M83 relativo)"
+                      % (reporte.get("e_invertidos", 0) if reporte.get("invirtio_e") else 0))
         lineas.append("")
         if e:
             lineas.append("COMANDOS ELIMINADOS (%d):" % len(e))
@@ -456,6 +445,10 @@ class CorrectorApp:
 
         color = COLOR_OK if e else COLOR_TEXTO
         self._set_reporte("\n".join(lineas), color)
+        self.txt_reporte.tag_add("destacado", "2.0", "2.0 lineend")
+        self.txt_reporte.tag_configure(
+            "destacado", foreground="#ffd166", font=(FUENTE[0], FUENTE[1], "bold")
+        )
         self.lbl_estado.configure(
             text="%d lineas eliminadas. Podes guardar la version corregida." % len(e)
         )
