@@ -22,6 +22,8 @@ from corrector import (
 
 logger = logging.getLogger(__name__)
 
+VERSION = "1.1.0"
+
 COLOR_FONDO = "#1e1e2e"
 COLOR_PANEL = "#2a2a3d"
 COLOR_TEXTO = "#e0e0e0"
@@ -39,7 +41,7 @@ class CorrectorApp:
         self.nombre_actual = None
         self.ruta_actual = None
 
-        raiz.title("Corrector G-Code - Impresora de Cemento")
+        raiz.title("Corrector G-Code v%s - Impresora de Cemento" % VERSION)
         raiz.geometry("1100x720")
         raiz.minsize(900, 600)
         raiz.configure(bg=COLOR_FONDO)
@@ -321,9 +323,14 @@ class CorrectorApp:
         return [cat for var, cat in self.check_vars if var.get()]
 
     def _copiar_reporte(self):
-        self.clipboard_clear()
-        self.clipboard_append(self.txt_reporte.get("1.0", "end-1c"))
-        self.lbl_estado.config(text="Reporte copiado")
+        texto = self.txt_reporte.get("1.0", "end-1c")
+        if not texto.strip():
+            self.lbl_estado.config(text="Reporte vacio. Procesa el archivo primero.")
+            return
+        self.raiz.clipboard_clear()
+        self.raiz.clipboard_append(texto)
+        self.raiz.update()
+        self.lbl_estado.config(text="Reporte copiado (%d lineas)" % len(texto.splitlines()))
 
     def _set_reporte(self, texto, color=None):
         self.txt_reporte.configure(state="normal", fg=color or COLOR_OK)
@@ -417,7 +424,7 @@ class CorrectorApp:
         n_final = reporte["lineas_escritas"]
         ahorro_total = n_total - n_final
         lineas = []
-        lineas.append("PROCESADO OK")
+        lineas.append("PROCESADO OK  [v%s]" % VERSION)
         lineas.append("  Lineas totales:    %d" % n_total)
         lineas.append("  Lineas escritas:   %d   (se ahorraron %d)" % (n_final, ahorro_total))
         lineas.append("  Lineas eliminadas: %d (comandos no usados)" % len(e))
@@ -445,7 +452,7 @@ class CorrectorApp:
 
         color = COLOR_OK if e else COLOR_TEXTO
         self._set_reporte("\n".join(lineas), color)
-        self.txt_reporte.tag_add("destacado", "2.0", "2.0 lineend")
+        self.txt_reporte.tag_add("destacado", "3.0", "3.0 lineend")
         self.txt_reporte.tag_configure(
             "destacado", foreground="#ffd166", font=(FUENTE[0], FUENTE[1], "bold")
         )
