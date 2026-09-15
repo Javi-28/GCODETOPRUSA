@@ -7,7 +7,8 @@ compatible con la impresora 3D de cemento.
 Elimina comandos de temperatura, homeo, nivelacion, ventiladores y
 configuracion irrelevante. Conserva movimiento (G0/G1), modos de
 coordenadas (G90/G91), unidades (G21), extrusion (M82/M83), reset de
-extrusor (G92) y comentarios informativos.
+extrusor (G92) y comentarios informativos. Opcionalmente puede quitar el
+relleno interior (infill) que Cura marca con ";TYPE:FILL"/";TYPE:INFILL".
 
 El parser es robusto: tolera mayusculas/minusculas, espacios raros
 ("G 28", "m 104"), numeros de linea ("N10 G90") y decimales ("G1.5").
@@ -65,7 +66,29 @@ _REG_COMANDO = re.compile(r"^\s*(?:N\d+\s*)?([GM])\s*(\d+(?:\.\d+)?)", re.IGNORE
 _REG_E = re.compile(r"\bE\s*(-?\d+(?:\.\d+)?)", re.IGNORECASE)
 _REG_M82 = re.compile(r"^M82\b", re.IGNORECASE)
 
+# Marcadores de seccion de Cura para el relleno interior (infill)
+_REG_TIPO = re.compile(r";TYPE:\s*([A-Z-]+)\b", re.IGNORECASE)
+_REG_MOVIMIENTO = re.compile(r"^(?:N\d+\s*)?(?:G0|G1)\b", re.IGNORECASE)
+
 _ENC_PREFERIDAS = ("utf-8-sig", "latin-1")
+
+
+def es_tipo_relleno(linea):
+    """True si la linea es un marcador ;TYPE: del relleno interior (infill).
+
+    Cura 4.13+ usa ";TYPE:FILL", las versiones anteriores ";TYPE:INFILL".
+    """
+    m = _REG_TIPO.search(linea)
+    if not m:
+        return False
+    tipo = m.group(1).upper()
+    return tipo.startswith("FILL") or tipo.startswith("INFILL")
+
+
+def es_linea_movimiento(linea):
+    """True si la linea es un movimiento G0/G1 (sin contar un comentario)."""
+    ojos = linea.split(";", 1)[0].strip()
+    return bool(_REG_MOVIMIENTO.match(ojos))
 
 
 def extraer_comando(linea):
@@ -96,17 +119,20 @@ def decodificar_contenido(datos_bytes):
     return datos_bytes.decode("utf-8", errors="replace")
 
 
-def construir_cabecera(nombre_original, categorias_activas, quedaron_sin_eliminar):
+def construir_cabecera(nombre_original, categorias_activas, quedaron_sin_eliminar,
+                       quitar_relleno=False):
     lineas = []
     lineas.append("; Corregido por Corrector G-Code (impresora de cemento)")
     lineas.append("; Original: %s" % nombre_original)
     if quedaron_sin_eliminar:
         lineas.append("; Aviso: las categorias marcadas incluyen comandos que podrian trabar la maquina.")
+    if quitar_relleno:
+        lineas.append("; Relleno interior (infill) eliminado: solo se conservan las paredes.")
     lineas.append(";")
     return "\n".join(lineas)
 
 
-def procesar_texto_gcode(texto, categorias=None, invertir_e=False):
+def procesar_texto_gcode(texto, categorias=None, invertir_e=False, quitar_relleno=False):
     """Corrige G-code en una cadena de texto.
 
     categorias: lista con claves de ELIMINAR (por defecto todas).
@@ -114,6 +140,10 @@ def procesar_texto_gcode(texto, categorias=None, invertir_e=False):
         invierte el signo de cada incremento E. Util para maquinas (como la
         de cemento) que extruyen con E negativo (tornillo/bobina al reves
         del estandar). Replica el patron del archivo manual que funciona.
+    quitar_relleno: si True elimina el relleno interior que Cura marca con
+        ";TYPE:FILL" o ";TYPE:INFILL", dejando solo las paredes. Al borrar
+        el bloque se resincroniza el extrusor con un "G92 E<valor>" para
+        que las extrusiones siguientes no se desfazen.
 
     Devuelve (texto_corregido, reporte) donde reporte es un dict:
     {
@@ -123,6 +153,8 @@ def procesar_texto_gcode(texto, categorias=None, invertir_e=False):
         "por_comando": {comando: cantidad, ...},
         "categorias_activas": [str, ...],
         "invirtio_e": bool,
+        "relleno_removido": int (lineas de infill quitadas),
+        "bloques_relleno": int (bloques ;TYPE:FILL/INFILL quitados),
     }
     """
     if categorias is None:
@@ -135,19 +167,49 @@ def procesar_texto_gcode(texto, categorias=None, invertir_e=False):
             a_eliminar.add(cmd)
             razones[cmd] = RAZONES.get(cmd, "desconocido")
 
+    lineas = texto.splitlines()
     salida = []
     eliminadas = []
-    total = len(texto.splitlines())
+    total = len(lineas)
     escritas = 0
     por_comando = {}
+    lineas_relleno = 0
+    bloques_relleno = 0
 
     modo_e = "ABS"   # estandar Marlin: M82 absoluto
     ultimo_e = 0.0
     e_invertidos = 0
 
-    for num, linea in enumerate(texto.splitlines(), start=1):
+    i = 0
+    while i < total:
+        num = i + 1
+        linea = lineas[i]
         ojos = linea.split(";", 1)[0].strip()
 
+        # ---- Quitar bloque de relleno interior (infill) ----
+        if quitar_relleno and es_tipo_relleno(linea):
+            ultimo_e_bloque = None
+            j = i + 1
+            while j < total and es_linea_movimiento(lineas[j]):
+                m = _REG_E.search(lineas[j].split(";", 1)[0].strip())
+                if m:
+                    ultimo_e_bloque = float(m.group(1).replace(" ", ""))
+                j += 1
+            quitaste = j - i
+            lineas_relleno += quitaste
+            if quitaste:
+                bloques_relleno += 1
+            if ultimo_e_bloque is not None:
+                comando_sig = extraer_comando(lineas[j]) if j < total else None
+                if comando_sig != "G92":
+                    resync = ("G92 E%g ; relleno interior quitado, "
+                              "extrusor resincronizado" % ultimo_e_bloque)
+                    lineas.insert(j, resync)
+                    total += 1
+            i = j
+            continue
+
+        # ---- Modo invertir_e: trackear modo/posicion del extrusor ----
         if invertir_e:
             if re.match(r"^M82\b", ojos, re.I):
                 modo_e = "ABS"
@@ -167,6 +229,7 @@ def procesar_texto_gcode(texto, categorias=None, invertir_e=False):
                 "razon": razones[comando],
             })
             por_comando[comando] = por_comando.get(comando, 0) + 1
+            i += 1
             continue
 
         if invertir_e and re.match(r"^(?:[GM])\s*\d+", ojos, re.I):
@@ -197,6 +260,7 @@ def procesar_texto_gcode(texto, categorias=None, invertir_e=False):
 
         salida.append(linea)
         escritas += 1
+        i += 1
 
     corregido = "\n".join(salida)
     if invertir_e:
@@ -213,21 +277,25 @@ def procesar_texto_gcode(texto, categorias=None, invertir_e=False):
         "categorias_activas": categorias,
         "invirtio_e": invertir_e,
         "e_invertidos": e_invertidos,
+        "relleno_removido": lineas_relleno,
+        "bloques_relleno": bloques_relleno,
     }
     return corregido, reporte
 
 
-def construir_correccion(texto, nombre_original="<desconocido>", categorias=None, invertir_e=False):
+def construir_correccion(texto, nombre_original="<desconocido>", categorias=None,
+                         invertir_e=False, quitar_relleno=False):
     """Devuelve (contenido_final_con_cabecera, reporte)."""
-    corregido, reporte = procesar_texto_gcode(texto, categorias, invertir_e)
-    cabecera = construir_cabecera(nombre_original, reporte["categorias_activas"], False)
+    corregido, reporte = procesar_texto_gcode(texto, categorias, invertir_e, quitar_relleno)
+    cabecera = construir_cabecera(nombre_original, reporte["categorias_activas"], False,
+                                  quitar_relleno)
     contenido = cabecera + "\n" + corregido
     if not texto.endswith(("\n", "\r")):
         contenido = contenido.rstrip("\n") + "\n"
     return contenido, reporte
 
 
-def corregir_archivo(entrada, salida=None, invertir_e=False):
+def corregir_archivo(entrada, salida=None, invertir_e=False, quitar_relleno=False):
     """Corrige un archivo .gcode en disco (CLI)."""
     entrada = Path(entrada)
     if not entrada.exists():
@@ -239,7 +307,7 @@ def corregir_archivo(entrada, salida=None, invertir_e=False):
     datos = entrada.read_bytes()
     texto = decodificar_contenido(datos)
     contenido, reporte = construir_correccion(
-        texto, entrada.name, list(ELIMINAR.keys()), invertir_e
+        texto, entrada.name, list(ELIMINAR.keys()), invertir_e, quitar_relleno
     )
 
     Path(salida).write_text(contenido, encoding="utf-8")
@@ -257,6 +325,9 @@ def _print_reporte(entrada, salida, reporte):
     print("  Lineas totales:       %d" % reporte["total_lineas"])
     print("  Lineas escritas:      %d" % reporte["lineas_escritas"])
     print("  Lineas eliminadas:    %d" % len(reporte["eliminadas"]))
+    if reporte.get("relleno_removido"):
+        print("  Relleno quitado:       %d bloques / %d lineas"
+              % (reporte["bloques_relleno"], reporte["relleno_removido"]))
     if reporte.get("invirtio_e"):
         print("  E invertido:          %d lineas (modo relativo M83)" % reporte["e_invertidos"])
     print("=" * 62)
@@ -277,20 +348,23 @@ def _print_reporte(entrada, salida, reporte):
 
 def main():
     if len(sys.argv) < 2:
-        print("Uso: python corregir_gcode.py <archivo_entrada> [archivo_salida] [--invertir-e]")
+        print("Uso: python corregir_gcode.py <archivo_entrada> [archivo_salida] [--invertir-e] [--quitar-relleno]")
         print()
         print("Ejemplo:")
         print("  python corregir_gcode.py PI3MK2_Fijador.gcode")
-        print("  python corregir_gcode.py PI3MK2_Fijador.gcode")
         print("  python corregir_gcode.py entrada.gcode salida_limpia.gcode")
         print("  python corregir_gcode.py entrada.gcode --invertir-e")
+        print("  python corregir_gcode.py entrada.gcode --quitar-relleno")
+        print("  python corregir_gcode.py entrada.gcode --invertir-e --quitar-relleno")
         return 1
 
     invertir_e = "--invertir-e" in sys.argv
-    args = [a for a in sys.argv[1:] if a != "--invertir-e"]
+    quitar_relleno = "--quitar-relleno" in sys.argv
+    args = [a for a in sys.argv[1:]
+            if a not in ("--invertir-e", "--quitar-relleno")]
 
     entrada, salida, reporte = corregir_archivo(
-        args[0], args[1] if len(args) > 1 else None, invertir_e
+        args[0], args[1] if len(args) > 1 else None, invertir_e, quitar_relleno
     )
     _print_reporte(entrada, salida, reporte)
     return 0

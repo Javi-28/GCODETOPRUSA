@@ -160,6 +160,18 @@ class CorrectorApp:
             style="Panel.TLabel",
             font=("Segoe UI", 8),
         ).pack(anchor="w", padx=12)
+        self.var_quitar_relleno = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            panel_opc,
+            text="Quitar relleno interior (infill)",
+            variable=self.var_quitar_relleno,
+        ).pack(anchor="w", padx=12, pady=2)
+        ttk.Label(
+            panel_opc,
+            text="Borra los bloques ;TYPE:FILL/INFILL de Cura\ny deja solo las paredes del objeto",
+            style="Panel.TLabel",
+            font=("Segoe UI", 8),
+        ).pack(anchor="w", padx=12)
         ttk.Button(
             panel_opc,
             text="Marcar / desmarcar todo",
@@ -261,7 +273,8 @@ class CorrectorApp:
             messagebox.showwarning("Sin contenido", "Carga un archivo G-Code primero.")
             return
         categorias = self._categorias_activas()
-        if not categorias:
+        quitar_relleno = self.var_quitar_relleno.get()
+        if not categorias and not quitar_relleno:
             messagebox.showwarning(
                 "Nada que quitar",
                 "No seleccionaste ninguna categoria a eliminar.",
@@ -274,6 +287,7 @@ class CorrectorApp:
                 self.nombre_actual or "<pegado>",
                 categorias,
                 self.var_invertir_e.get(),
+                quitar_relleno,
             )
         except Exception as e:
             messagebox.showerror("Error al procesar", str(e))
@@ -289,6 +303,11 @@ class CorrectorApp:
         lineas.append("  Lineas totales:    %d" % n_total)
         lineas.append("  Lineas escritas:   %d" % reporte["lineas_escritas"])
         lineas.append("  Lineas eliminadas: %d" % len(e))
+        if reporte.get("relleno_removido"):
+            lineas.append(
+                "  Relleno quitado:    %d bloques / %d lineas"
+                % (reporte["bloques_relleno"], reporte["relleno_removido"])
+            )
         if reporte.get("invirtio_e"):
             lineas.append(
                 "  E invertido:       %d lineas (M83 relativo)" % reporte["e_invertidos"]
