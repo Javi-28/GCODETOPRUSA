@@ -25,7 +25,7 @@ seguro segun el sistema donde se ejecute:
       - INSTALAR-MAC.command : revisa e instala las dependencias que falten
                                (python3 / tkinter) y abre el programa.
       - INICIAR.command      : arranque directo si ya tiene las dependencias.
-      - corregir_gcode.py, corregir_ui.py, run.bat, compilacion/, LEEME.
+      - corregir_gcode.py, corregir_ui.py, corrector/, run.bat, compilacion/, LEEME.
 
     El receptor descomprime, doble clic a INSTALAR-MAC.command y listo.
 
@@ -319,6 +319,9 @@ def armar_chico_mac():
             (PROYECTO / "run.bat", "run.bat"),
         ):
             z.write(origen, "%s/%s" % (CHICO_NOMBRE, destino))
+        paquete = PROYECTO / "corrector"
+        for f in sorted(paquete.glob("*.py")):
+            z.write(f, "%s/corrector/%s" % (CHICO_NOMBRE, f.name))
         for origen, destino in compilacion_py:
             z.write(origen, "%s/%s" % (CHICO_NOMBRE, destino))
     return ruta_zip

@@ -9,14 +9,18 @@ Para abrirla:
     run.bat   (o)   py corregir_ui.py
 """
 
+import logging
 import tkinter as tk
 from tkinter import ttk, filedialog, messagebox
 
-from corregir_gcode import (
+from corrector import (
     ELIMINAR,
     construir_correccion,
+    configurar_log,
     decodificar_contenido,
 )
+
+logger = logging.getLogger(__name__)
 
 COLOR_FONDO = "#1e1e2e"
 COLOR_PANEL = "#2a2a3d"
@@ -298,11 +302,13 @@ class CorrectorApp:
         )
         if not ruta:
             return
+        logger.info("Cargando archivo: %s", ruta)
         try:
             with open(ruta, "rb") as f:
                 datos = f.read()
             texto = decodificar_contenido(datos)
         except OSError as e:
+            logger.error("Error al leer %s: %s", ruta, e)
             messagebox.showerror("Error al leer", str(e))
             return
 
@@ -344,8 +350,13 @@ class CorrectorApp:
                 self._leer_tol_arc(),
             )
         except Exception as e:
+            logger.exception("Error al procesar: %s", e)
             messagebox.showerror("Error al procesar", str(e))
             return
+
+        logger.info("Procesado OK: %d lineas totales, %d eliminadas, %d soldadas",
+                    reporte["total_lineas"], len(reporte["eliminadas"]),
+                    reporte.get("arcos_soldados", 0))
 
         self.corregido_actual = contenido
         self._set_corregido(contenido)
@@ -454,6 +465,8 @@ def _agregar_scrollbar(parent, widget_text, row):
 
 
 def main():
+    ruta_log = configurar_log()
+    logger.info("GUI iniciada (log: %s)", ruta_log)
     raiz = tk.Tk()
     CorrectorApp(raiz)
     raiz.mainloop()
