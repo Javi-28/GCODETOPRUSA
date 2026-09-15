@@ -65,6 +65,9 @@ def _print_reporte(entrada, salida, reporte, ruta_log=None):
     if reporte.get("rectas_unidas"):
         print("  Rectas unidas:        %d (G1 colineales colapsados, %d lineas ahorradas)"
               % (reporte["rectas_unidas"], reporte["lineas_ahorradas_rectas"]))
+    if reporte.get("arcos_desarmados"):
+        print("  Arcos a G1:           %d G2/G3 convertidos a %d segmentos G1"
+              % (reporte["arcos_desarmados"], reporte["segmentos_g1"]))
     if reporte.get("invirtio_e"):
         print("  E invertido:          %d lineas (modo relativo M83)" % reporte["e_invertidos"])
     print("=" * 62)
@@ -87,7 +90,7 @@ def _print_reporte(entrada, salida, reporte, ruta_log=None):
 
 def main():
     FLAGS = ("--invertir-e", "--quitar-relleno", "--curvas", "--extrusion",
-             "--unir-rectas")
+             "--unir-rectas", "--solo-g1")
     if len(sys.argv) < 2:
         print("Uso: python corregir_gcode.py <archivo_entrada> [archivo_salida] [FLAGS]")
         print()
@@ -95,10 +98,17 @@ def main():
         print("  --invertir-e       Extrusion a relativa (M83) con E negativo")
         print("  --quitar-relleno   Borra bloques ;TYPE:FILL/INFILL (infill)")
         print("  --curvas           Fusiona tramos G1 poligonales en arcos G2/G3")
-        print("                     (arc welding) e inyecta G17. Opcional:")
+        print("                     (arc welding). Opcional:")
         print("                     --tol-arc=NUM desviacion maxima en mm (default 0.1)")
         print("                     Solo convierte curvas reales: rectas y cuadrados")
         print("                     (radio gigante o giro minimo) quedan como G1.")
+        print("                     Los arcos casi semicirculares (~180 grados, R")
+        print("                     ambiguo para el firmware) tampoco se sueldan.")
+        print("  --solo-g1          Convierte TODO G2/G3 a G1 finos (paso ~0.5 mm).")
+        print("                     Para firmware sin soporte de arcos (los G2/G3")
+        print("                     generan error o hacen girar los motores al reves).")
+        print("                     Combinable con --curvas (soldar y luego expandir).")
+        print("                     Opcional: --paso-arc=NUM paso en mm (default 0.5)")
         print("  --extrusion        Inyecta M200 S0/M220 S100/M221 S100 y conserva M220/M221")
         print("  --unir-rectas      Colapsa lineas G1 colineales de Cura a un solo G1")
         print("                     (paredes subdivididas). Independiente de --curvas.")
@@ -107,6 +117,7 @@ def main():
         print("Ejemplos:")
         print("  python corregir_gcode.py PI3MK2_Fijador.gcode --curvas --invertir-e")
         print("  python corregir_gcode.py entrada.gcode --curvas --tol-arc=0.05")
+        print("  python corregir_gcode.py entrada.gcode --solo-g1 --invertir-e")
         print("  python corregir_gcode.py entrada.gcode --unir-rectas")
         print("  python corregir_gcode.py entrada.gcode --extrusion --quitar-relleno")
         return 1
@@ -117,9 +128,11 @@ def main():
     curvas = "--curvas" in sys.argv
     configurar_extrusion = "--extrusion" in sys.argv
     unir_rectas = "--unir-rectas" in sys.argv
+    desarmar = "--solo-g1" in sys.argv
 
     tolerancia_arc = 0.1
     tolerancia_recta = 0.05
+    paso_arc = 0.5
     for a in sys.argv:
         if a.startswith("--tol-arc="):
             try:
@@ -131,19 +144,24 @@ def main():
                 tolerancia_recta = float(a.split("=", 1)[1])
             except ValueError:
                 pass
+        elif a.startswith("--paso-arc="):
+            try:
+                paso_arc = float(a.split("=", 1)[1])
+            except ValueError:
+                pass
 
     args = [a for a in sys.argv[1:]
             if a not in FLAGS and not a.startswith("--tol-arc=")
-            and not a.startswith("--tol-recta=")]
+            and not a.startswith("--tol-recta=") and not a.startswith("--paso-arc=")]
 
     logger.info("CLI: entrada=%s flags(i=%s,relleno=%s,curvas=%s,extrusion=%s,"
-                "unir_rectas=%s)",
+                "unir_rectas=%s, solo_g1=%s, paso_arc=%s)",
                 args[0], invertir_e, quitar_relleno, curvas, configurar_extrusion,
-                unir_rectas)
+                unir_rectas, desarmar, paso_arc)
     entrada, salida, reporte = corregir_archivo(
         args[0], args[1] if len(args) > 1 else None, invertir_e, quitar_relleno,
         curvas, configurar_extrusion, tolerancia_arc, unir_rectas=unir_rectas,
-        tolerancia_recta=tolerancia_recta,
+        tolerancia_recta=tolerancia_recta, desarmar=desarmar, paso_arc=paso_arc,
     )
     _print_reporte(entrada, salida, reporte, ruta_log)
     return 0

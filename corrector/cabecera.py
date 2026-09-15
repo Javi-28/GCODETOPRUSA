@@ -3,7 +3,7 @@
 
 def construir_cabecera(nombre_original, categorias_activas, quedaron_sin_eliminar,
                        quitar_relleno=False, curvas=False, configurar_extrusion=False,
-                       unir_rectas=False):
+                       unir_rectas=False, desarmar=False):
     lineas = []
     lineas.append("; Corregido por Corrector G-Code (impresora de cemento)")
     lineas.append("; Original: %s" % nombre_original)
@@ -12,7 +12,9 @@ def construir_cabecera(nombre_original, categorias_activas, quedaron_sin_elimina
     if quitar_relleno:
         lineas.append("; Relleno interior (infill) eliminado: solo se conservan las paredes.")
     if curvas:
-        lineas.append("; Curvas activadas: G17 (plano XY) + arcos G2/G3 (arc welding).")
+        lineas.append("; Curvas activadas: arcos G2/G3 (arc welding).")
+    if desarmar:
+        lineas.append("; Arcos convertidos a G1 (todo en movimientos lineales G1).")
     if unir_rectas:
         lineas.append("; Rectas unidas: lineas colineales de Cura colapsadas a un solo G1.")
     if configurar_extrusion:

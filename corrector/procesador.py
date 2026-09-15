@@ -7,7 +7,7 @@ from .constantes import ELIMINAR, clasificar_eliminables
 from .extrusion import InversorE
 from .lineas import es_tipo_relleno, extraer_comando
 from .relleno import consumir_bloque_relleno
-from .curvas import soldar_arcos
+from .curvas import soldar_arcos, desarmar_arcos
 from .rectas import unir_rectas as _unir_rectas
 
 logger = logging.getLogger(__name__)
@@ -17,7 +17,8 @@ def procesar_texto_gcode(texto, categorias=None, invertir_e=False, quitar_rellen
                          curvas=False, configurar_extrusion=False,
                          tolerancia_arc=0.1, min_seg_arc=3,
                          radio_maximo_arc=None, barrido_minimo_arc=None,
-                         unir_rectas=False, tolerancia_recta=0.05):
+                         unir_rectas=False, tolerancia_recta=0.05,
+                         desarmar=False, paso_arc=0.5):
     """Corrige G-code en una cadena de texto.
 
     categorias: lista con claves de ELIMINAR (por defecto todas).
@@ -30,12 +31,19 @@ def procesar_texto_gcode(texto, categorias=None, invertir_e=False, quitar_rellen
         el bloque se resincroniza el extrusor con un "G92 E<valor>" para
         que las extrusiones siguientes no se desfazen.
     curvas: si True fusiona los tramos de G1 poligonales de Cura en arcos
-        G2/G3 (arc welding) e inyecta G17 al inicio. Solo se convierten
-        curvas reales: los tramos casi rectos (cuadrados/rectas con ruido)
-        se descartan si no tienen un giro minimo o su radio es gigante.
+        G2/G3 (arc welding). Solo se convierten curvas reales: los tramos
+        casi rectos (cuadrados/rectas con ruido) se descartan si no tienen
+        un giro minimo o su radio es gigante. No se sueldan arcos casi
+        semicirculares (barrido ~180°: el firmware puede revertir el giro).
         'tolerancia_arc' es la desviacion maxima (mm) aceptada entre la
         curva original y el arco (default 0.1). 'min_seg_arc' es la cantidad
         minima de segmentos G1 fusionados por arco (default 3).
+    desarmar: si True convierte TODO G2/G3 (los generados por 'curvas' y los
+        preexistentes del archivo) a G1 subdivididos (paso ~0.5 mm). Util
+        para firmwares SIN ARC_SUPPORT donde los arcos generan error o hacen
+        girar los motores al reves. Compatible con 'curvas' True (soldar y
+        luego desarmar = curvas suaves en G1 puro) o solo con invertir_e.
+        'paso_arc' es el paso aproximado en mm de los segmentos (default 0.5).
     configurar_extrusion: si True inyecta M200 S0 (desactivar volumetrico),
         M220 S100 (velocidad al 100%) y M221 S100 (flujo al 100%) al
         inicio, y NO elimina los comandos M220/M221 del archivo original.
@@ -153,10 +161,18 @@ def procesar_texto_gcode(texto, categorias=None, invertir_e=False, quitar_rellen
         arcos_soldados = info_weld["arcos_soldados"]
         lineas_ahorradas = info_weld["lineas_ahorradas"]
 
+    # ---- Desarmar arcos: G2/G3 a G1 (firmwares sin ARC_SUPPORT) ----
+    arcos_desarmados = 0
+    segmentos_g1 = 0
+    if desarmar:
+        salida, info_des = desarmar_arcos(
+            salida, paso_arc, modo_e_relativo=bool(inversor),
+        )
+        arcos_desarmados = info_des["arcos_desarmados"]
+        segmentos_g1 = info_des["segmentos"]
+
     corregido = "\n".join(salida)
     prefijo = []
-    if curvas:
-        prefijo.append("G17 ; (plano XY activado para curvas G2/G3)")
     if configurar_extrusion:
         prefijo.append("M200 S0 ; (extrusion volumetrica desactivada)")
         prefijo.append("M220 S100 ; (factor de velocidad al 100%)")
@@ -173,10 +189,11 @@ def procesar_texto_gcode(texto, categorias=None, invertir_e=False, quitar_rellen
 
     logger.info("Resultado: %d eliminadas / relleno %d bloques-%d lineas / "
                 "E invertido %d / rectas unidas %d (%d ahorradas) / "
-                "arcos soldados %d (%d ahorradas)",
+                "arcos soldados %d (%d ahorradas) / desarmados %d (%d G1)",
                 len(eliminadas), bloques_relleno, lineas_relleno,
                 e_invertidos, rectas_unidas, lineas_ahorradas_rectas,
-                arcos_soldados, lineas_ahorradas)
+                arcos_soldados, lineas_ahorradas,
+                arcos_desarmados, segmentos_g1)
 
     reporte = {
         "total_lineas": total,
@@ -193,6 +210,8 @@ def procesar_texto_gcode(texto, categorias=None, invertir_e=False, quitar_rellen
         "lineas_ahorradas": lineas_ahorradas,
         "rectas_unidas": rectas_unidas,
         "lineas_ahorradas_rectas": lineas_ahorradas_rectas,
+        "arcos_desarmados": arcos_desarmados,
+        "segmentos_g1": segmentos_g1,
     }
     return corregido, reporte
 
@@ -202,16 +221,18 @@ def construir_correccion(texto, nombre_original="<desconocido>", categorias=None
                          configurar_extrusion=False, tolerancia_arc=0.1,
                          min_seg_arc=3, radio_maximo_arc=None,
                          barrido_minimo_arc=None, unir_rectas=False,
-                         tolerancia_recta=0.05):
+                         tolerancia_recta=0.05, desarmar=False, paso_arc=0.5):
     """Devuelve (contenido_final_con_cabecera, reporte)."""
     corregido, reporte = procesar_texto_gcode(
         texto, categorias, invertir_e, quitar_relleno, curvas,
         configurar_extrusion, tolerancia_arc, min_seg_arc,
         radio_maximo_arc, barrido_minimo_arc, unir_rectas, tolerancia_recta,
+        desarmar, paso_arc,
     )
     cabecera = cabecera_mod.construir_cabecera(
         nombre_original, reporte["categorias_activas"], False,
         quitar_relleno, curvas, configurar_extrusion, unir_rectas,
+        desarmar=desarmar,
     )
     contenido = cabecera + "\n" + corregido
     reporte["lineas_escritas"] = len(contenido.splitlines())

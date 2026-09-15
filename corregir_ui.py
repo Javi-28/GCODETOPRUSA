@@ -188,7 +188,7 @@ class CorrectorApp:
         ).pack(anchor="w", padx=12, pady=2)
         ttk.Label(
             panel_opc,
-            text="Fusiona tramos G1 en arcos G2/G3 (arc welding)\ne inyecta G17 (plano XY). Deja el giro suave\ny el codigo mas compacto.",
+            text="Fusiona tramos G1 en arcos G2/G3 (arc welding).\nDeja el giro suave y el codigo mas compacto.",
             style="Panel.TLabel",
             font=("Segoe UI", 8),
         ).pack(anchor="w", padx=12)
@@ -212,6 +212,18 @@ class CorrectorApp:
         ttk.Label(
             panel_opc,
             text="Desviacion maxima entre la curva\noriginal y el arco, en milimetros.",
+            style="Panel.TLabel",
+            font=("Segoe UI", 8),
+        ).pack(anchor="w", padx=12)
+        self.var_solo_g1 = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            panel_opc,
+            text="Convertir curvas a movimientos G1",
+            variable=self.var_solo_g1,
+        ).pack(anchor="w", padx=12, pady=2)
+        ttk.Label(
+            panel_opc,
+            text="Convierte TODO G2/G3 a G1 finos. Para maquinas\nque fallan con curvas (sueldan, frenan o giran\nlos motores al reves). Combinable con 'Curvas'.",
             style="Panel.TLabel",
             font=("Segoe UI", 8),
         ).pack(anchor="w", padx=12)
@@ -385,8 +397,10 @@ class CorrectorApp:
         curvas = self.var_curvas.get()
         configurar_extrusion = self.var_extrusion.get()
         unir_rectas = self.var_unir_rectas.get()
+        desarmar = self.var_solo_g1.get()
         if not categorias and not quitar_relleno and not curvas \
-                and not configurar_extrusion and not unir_rectas:
+                and not configurar_extrusion and not unir_rectas \
+                and not desarmar and not self.var_invertir_e.get():
             messagebox.showwarning(
                 "Nada que quitar",
                 "No seleccionaste ninguna categoria ni opcion.",
@@ -405,6 +419,7 @@ class CorrectorApp:
                 self._leer_tol_arc(),
                 unir_rectas=unir_rectas,
                 tolerancia_recta=self._leer_tol_recta(),
+                desarmar=desarmar,
             )
         except Exception as e:
             logger.exception("Error al procesar: %s", e)

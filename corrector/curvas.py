@@ -9,7 +9,7 @@ import logging
 import math
 import re
 
-from .patrones import _REG_E, _REG_F, _REG_G1_XY, _REG_XYZ
+from .patrones import _REG_E, _REG_F, _REG_G1_XY, _REG_XYZ, _REG_R
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +24,12 @@ logger = logging.getLogger(__name__)
 RADIO_MAXIMO_DEFECTO = 200.0
 RADIO_MINIMO_DEFECTO = 0.2
 BARRIDO_MINIMO_DEFECTO = math.radians(15.0)
+
+# Un arco casi-semicircular (barrido ~180°) es AMBIGUO para el firmware:
+# el centro reconstruido desde R puede caer del lado contrario y el cabezal
+# gira al reves ("tira los motores para atras"). No se sueldan arcos con
+# barrido mayor a este limite (180° - 5°).
+BARRIDO_MAXIMO_DEFECTO = math.pi - math.radians(5.0)
 
 # F2 - Densidad de curva: un tramo solo es candidato a arco si hay una ventana
 # deslizante con 'MIN_SEG_DENSIDAD' movimientos consecutivos recorriendo a lo
@@ -131,6 +137,10 @@ def _ajuste_arco_det(puntos, tolerancia, radio_maximo, barrido_minimo,
         return None, ("barrido %.1f grados < minimo %.1f (recta con ruido)"
                       % (math.degrees(abs(total)),
                          math.degrees(barrido_minimo)))
+    if abs(total) > BARRIDO_MAXIMO_DEFECTO:
+        return None, ("barrido %.1f grados casi-semicirculo (R ambiguo: "
+                      "el firmware puede girar al reves)"
+                      % math.degrees(abs(total)))
     if abs(total) > 2.0 * math.pi:            # mas de una vuelta: ruido/precision
         return None, ("giro %.0f grados > 360 (puntos repetidos o ruido)"
                       % math.degrees(abs(total)))
@@ -309,3 +319,130 @@ def soldar_arcos(lineas, tolerancia=0.1, min_seg=3, modo_e_relativo=False,
     logger.debug("Resumen arc welding: %d arcos soldados, %d lineas ahorradas",
                  soldados, ahorro)
     return salida, {"arcos_soldados": soldados, "lineas_ahorradas": ahorro}
+
+
+def desarmar_arcos(lineas, paso=0.5, modo_e_relativo=False):
+    """Convierte G2/G3 del plano XY a G1 subdivididos de ~'paso' mm.
+
+    Para firmwares SIN ARC_SUPPORT (los G2/G3 generan error, detienen la
+    maquina o la hacen girar en sentido contrario). Convierte CADA arco en
+    G1 finos que cualquier controlador entiende, repartiendo E y Z
+    (helices) a lo largo de los segmentos.
+
+    - Solo se convierten G2/G3 del plano XY con X, Y y R; cualquier arco
+      sin esos parametros se deja igual (pasa tal cual).
+    - Con 'modo_e_relativo' True (M83) el E del arco es un incremento unico
+      que se reparte en proporcion a la longitud de cada segmento. Con
+      False (M82) el E es cota absoluta y se interpola linealmente desde la
+      posicion anterior hasta el destino.
+    - Se hace seguimiento de posicion (G0/G1), de M82/M83 y de G92 para
+      mantener la continuidad.
+    Devuelve (nuevas_lineas, {"arcos_desarmados": int, "segmentos": int}).
+    """
+    salida = []
+    desarmados = 0
+    segmentos = 0
+    pos = {"X": 0.0, "Y": 0.0, "Z": None, "E": None}
+    modo_e = "REL" if modo_e_relativo else "ABS"
+
+    for linea in lineas:
+        ojos = linea.split(";", 1)[0].strip().lstrip("\ufeff")
+        m = re.match(r"^G([0-3])\b", ojos, re.I)
+        if m:
+            codigo = int(m.group(1))
+            if codigo == 2 or codigo == 3:
+                xyz, e, f = _extr_xyz_ef(linea)
+                mr = _REG_R.search(ojos)
+                if (xyz.get("X") is None or xyz.get("Y") is None or mr is None):
+                    salida.append(linea)
+                    continue
+                sx, sy = pos["X"], pos["Y"]
+                tx, ty = xyz["X"], xyz["Y"]
+                R = abs(float(mr.group(1).replace(" ", "")))
+                chord = math.hypot(tx - sx, ty - sy)
+                if chord < 1e-9 or chord > 2.0 * R:
+                    salida.append(linea)
+                    continue
+                cw = (codigo == 2)                     # G2 horario, G3 anti
+                mx, my = (sx + tx) / 2.0, (sy + ty) / 2.0
+                px, py = -(ty - sy) / chord, (tx - sx) / chord
+                h = math.sqrt(max(R * R - (chord / 2.0) ** 2, 0.0))
+                centros = [(mx + px * h, my + py * h),
+                           (mx - px * h, my - py * h)]
+                centro, ang0, sweep = None, 0.0, None
+                for cx, cy in centros:
+                    a0 = math.atan2(sy - cy, sx - cx)
+                    a1 = math.atan2(ty - cy, tx - cx)
+                    d = (a1 - a0) % (2.0 * math.pi)
+                    if cw:
+                        s = 2.0 * math.pi - d            # horario: girar al reves
+                        if s < 1e-12:
+                            s = 2.0 * math.pi
+                    else:
+                        s = d if d > 1e-12 else 2.0 * math.pi
+                    if sweep is None or s < sweep:
+                        centro, ang0, sweep = (cx, cy), a0, s
+                if centro is None or sweep >= 2.0 * math.pi:
+                    salida.append(linea)
+                    continue
+                signo = -1.0 if cw else 1.0
+                nseg = max(int(math.ceil(sweep * R / max(paso, 1e-9))), 1)
+                e_ini = None
+                if e is not None and modo_e == "ABS":
+                    e_ini = pos.get("E")
+                    if e_ini is None:
+                        e_ini = 0.0
+                for i in range(1, nseg + 1):
+                    ang = ang0 + signo * sweep * i / nseg
+                    px_, py_ = centro[0] + R * math.cos(ang), \
+                        centro[1] + R * math.sin(ang)
+                    p = ["G1", "X" + _fmt(px_), "Y" + _fmt(py_)]
+                    if xyz.get("Z") is not None:
+                        z0 = pos.get("Z")
+                        if z0 is None:
+                            z0 = xyz["Z"]
+                        p.append("Z" + _fmt(z0 + (xyz["Z"] - z0) * i / nseg))
+                    if e is not None:
+                        if modo_e == "REL":
+                            por_seg = e / nseg
+                            e_seg = e - por_seg * (nseg - 1) if i == nseg \
+                                else por_seg
+                        else:
+                            e_seg = e_ini + (e - e_ini) * i / nseg
+                        p.append("E" + _fmt(e_seg))
+                    if f is not None and i == 1:
+                        p.append("F" + _fmt(f, 3))
+                    salida.append(" ".join(p))
+                segmentos += nseg
+                desarmados += 1
+                if modo_e == "ABS" and e is not None:
+                    pos["E"] = e
+                pos["X"], pos["Y"] = tx, ty
+                if xyz.get("Z") is not None:
+                    pos["Z"] = xyz["Z"]
+                continue
+            if codigo in (0, 1):
+                xyz, e, _f = _extr_xyz_ef(linea)
+                for k in ("X", "Y"):
+                    if xyz.get(k) is not None:
+                        pos[k] = xyz[k]
+                if xyz.get("Z") is not None:
+                    pos["Z"] = xyz["Z"]
+                if e is not None and modo_e == "ABS":
+                    pos["E"] = e
+                salida.append(linea)
+                continue
+        ojos_up = ojos.upper()
+        if ojos_up.startswith("M82"):
+            modo_e = "ABS"
+        elif ojos_up.startswith("M83"):
+            modo_e = "REL"
+        elif re.match(r"^G92\b", ojos, re.I):
+            m = _REG_E.search(ojos)
+            if m:
+                pos["E"] = float(m.group(1).replace(" ", ""))
+        salida.append(linea)
+
+    logger.debug("Desarmar arcos: %d G2/G3 convertidos a %d segmentos G1",
+                 desarmados, segmentos)
+    return salida, {"arcos_desarmados": desarmados, "segmentos": segmentos}

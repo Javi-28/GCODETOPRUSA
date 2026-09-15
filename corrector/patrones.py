@@ -20,6 +20,8 @@ _REG_MOVIMIENTO = re.compile(r"^(?:N\d+\s*)?(?:G[0-3])\b", re.IGNORECASE)
 _REG_G1_XY = re.compile(r"^\s*(?:N\d+\s*)?G1\b", re.IGNORECASE)
 _REG_XYZ = re.compile(r"\b([XYZ])\s*(-?\d+(?:\.\d+)?)", re.IGNORECASE)
 _REG_F = re.compile(r"\bF\s*(-?\d+(?:\.\d+)?)", re.IGNORECASE)
+# Radio de un arco G2/G3 (necesario para desarmar arcos a G1).
+_REG_R = re.compile(r"\bR\s*(-?\d+(?:\.\d+)?)", re.IGNORECASE)
 
 
 def numero(parte):
