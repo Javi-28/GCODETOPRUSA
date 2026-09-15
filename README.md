@@ -61,10 +61,12 @@ aplicar:
   cada incremento E**, replicando el archivo manual que ya funciona en la
   máquina.
 - **ARC_SUPPORT depende del firmware.** Marlin no acepta `G2/G3` "de fábrica";
-  hay que compilarlo con `ARC_SUPPORT` y planificar en el plano correcto
-  (`G17`, plano XY). Nuestro firmware ya lo trae activo, y un archivo de
-  referencia de la máquina confirma que los arcos `G2/G3 R` (incluso
-  helicoidales con Z) funcionan correctamente.
+  hay que compilarlo con `ARC_SUPPORT`. Un archivo de referencia de la máquina
+  sugiere que los arcos `G2/G3 R` (incluso helicoidales con Z) funcionan, pero
+  **no está confirmado en la placa real**: si el firmware no los soporta, bota
+  la línea o **revierte el giro del motor**. Por eso existe la opción
+  *"Convertir curvas a movimientos G1"* (`--solo-g1`) y ya **no** se inyecta
+  `G17` (da error sin `CNC_WORKSPACE_PLANES`). Ver `ERRORES.md`.
 
 ### El síntoma que nos hizo trabajar en esto
 Aplicando arc welding "ingenuo" sobre los `G1` de Cura aparecían arcos
@@ -204,7 +206,9 @@ Sobre el candidato curvoo se prueba un círculo con **todos** estos criterios
 Se elige el **prefijo más largo** del run que cumpla todo, y se emite **una**
 línea de arco:
 - `G3` si el giro acumulado es positivo (anti-horario) / `G2` si es negativo
-  (horario), en plano `G17`.
+  (horario); plano XY por defecto (no se inyecta `G17`).
+- Se descartan los arcos casi-semicirculares (barrido > 175°), donde el `R` es
+  ambiguo y el firmware puede girar al revés.
 - `X/Y` del último punto, `Z` opcional (arco helicoidal), **`R`** del círculo.
 - `E`: **suma de incrementos** si el modo es relativo (`M83`/invertir E) o el
   **último valor absoluto** si `M82`.
@@ -235,6 +239,7 @@ tocarlos, y "hace bien extrusión" sigue exacto.
 - **CLI:**
   - `python corregir_gcode.py entrada.gcode --curvas --invertir-e`
   - `python corregir_gcode.py entrada.gcode --curvas --tol-arc=0.05`
+  - `python corregir_gcode.py entrada.gcode --curvas --solo-g1` (arcos -> G1, para firmware sin `ARC_SUPPORT`)
   - `python corregir_gcode.py entrada.gcode --unir-rectas --tol-recta=0.05`
 - **Logs:** todo se registra en `logs/CorrectorGcode.log` (carpeta junto al
   script o al ejecutable). Nivel **DEBUG** en archivo, INFO en consola. Cada
@@ -255,8 +260,9 @@ tocarlos, y "hace bien extrusión" sigue exacto.
    ventilador, config), con resync `G92 E` tras quitar relleno.
 3. **Invertir E** (opcional): `M83` + signo de cada incremento.
 4. **Unir rectas** (F1, planeada) -> **Detectar y soldar curvas** (F2+F3).
-5. **Inyectar prefijo** (G17 / M200/M220/M221 / M83 según opciones) y **cabecera
-   comentada**.
+5. **Inyectar prefijo** (M200/M220/M221 / M83 según opciones) y **cabecera
+   comentada**. Opcionalmente **desarmar curvas a G1** para firmware sin
+   `ARC_SUPPORT`.
 6. **Guardar** `_corregido.gcode` y registrar todo en el log.
 
 ---
