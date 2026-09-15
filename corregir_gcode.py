@@ -5,10 +5,11 @@ Transforma G-code generado por Cura (impresoras de plastico) a un formato
 compatible con la impresora 3D de cemento.
 
 Elimina comandos de temperatura, homeo, nivelacion, ventiladores y
-configuracion irrelevante. Conserva movimiento (G0/G1), modos de
+configuracion irrelevante. Conserva movimiento (G0-G3), modos de
 coordenadas (G90/G91), unidades (G21), extrusion (M82/M83), reset de
 extrusor (G92) y comentarios informativos. Opcionalmente puede quitar el
-relleno interior (infill) que Cura marca con ";TYPE:FILL"/";TYPE:INFILL".
+relleno interior (infill) que Cura marca con ";TYPE:FILL"/";TYPE:INFILL",
+activar curvas G2/G3 con G17, o configurar extrusion (M200/M220/M221).
 
 El parser es robusto: tolera mayusculas/minusculas, espacios raros
 ("G 28", "m 104"), numeros de linea ("N10 G90") y decimales ("G1.5").
@@ -68,7 +69,7 @@ _REG_M82 = re.compile(r"^M82\b", re.IGNORECASE)
 
 # Marcadores de seccion de Cura para el relleno interior (infill)
 _REG_TIPO = re.compile(r";TYPE:\s*([A-Z-]+)\b", re.IGNORECASE)
-_REG_MOVIMIENTO = re.compile(r"^(?:N\d+\s*)?(?:G0|G1)\b", re.IGNORECASE)
+_REG_MOVIMIENTO = re.compile(r"^(?:N\d+\s*)?(?:G[0-3])\b", re.IGNORECASE)
 
 _ENC_PREFERIDAS = ("utf-8-sig", "latin-1")
 
@@ -86,7 +87,7 @@ def es_tipo_relleno(linea):
 
 
 def es_linea_movimiento(linea):
-    """True si la linea es un movimiento G0/G1 (sin contar un comentario)."""
+    """True si la linea es un movimiento G0/G1/G2/G3 (sin comentario)."""
     ojos = linea.split(";", 1)[0].strip()
     return bool(_REG_MOVIMIENTO.match(ojos))
 
@@ -120,7 +121,7 @@ def decodificar_contenido(datos_bytes):
 
 
 def construir_cabecera(nombre_original, categorias_activas, quedaron_sin_eliminar,
-                       quitar_relleno=False):
+                       quitar_relleno=False, curvas=False, configurar_extrusion=False):
     lineas = []
     lineas.append("; Corregido por Corrector G-Code (impresora de cemento)")
     lineas.append("; Original: %s" % nombre_original)
@@ -128,11 +129,16 @@ def construir_cabecera(nombre_original, categorias_activas, quedaron_sin_elimina
         lineas.append("; Aviso: las categorias marcadas incluyen comandos que podrian trabar la maquina.")
     if quitar_relleno:
         lineas.append("; Relleno interior (infill) eliminado: solo se conservan las paredes.")
+    if curvas:
+        lineas.append("; Curvas activadas: G17 (plano XY) + soporte G2/G3.")
+    if configurar_extrusion:
+        lineas.append("; Extrusion configurada: M200 S0 (sin volumetrico), M221 S100 (flujo 100%).")
     lineas.append(";")
     return "\n".join(lineas)
 
 
-def procesar_texto_gcode(texto, categorias=None, invertir_e=False, quitar_relleno=False):
+def procesar_texto_gcode(texto, categorias=None, invertir_e=False, quitar_relleno=False,
+                         curvas=False, configurar_extrusion=False):
     """Corrige G-code en una cadena de texto.
 
     categorias: lista con claves de ELIMINAR (por defecto todas).
@@ -144,6 +150,11 @@ def procesar_texto_gcode(texto, categorias=None, invertir_e=False, quitar_rellen
         ";TYPE:FILL" o ";TYPE:INFILL", dejando solo las paredes. Al borrar
         el bloque se resincroniza el extrusor con un "G92 E<valor>" para
         que las extrusiones siguientes no se desfazen.
+    curvas: si True soporta G2/G3 (arcos) en la inversion de E e inyecta
+        G17 (seleccion de plano XY) al inicio para que las curvas funcionen.
+    configurar_extrusion: si True inyecta M200 S0 (desactivar volumetrico),
+        M220 S100 (velocidad al 100%) y M221 S100 (flujo al 100%) al
+        inicio, y NO elimina los comandos M220/M221 del archivo original.
 
     Devuelve (texto_corregido, reporte) donde reporte es un dict:
     {
@@ -155,6 +166,7 @@ def procesar_texto_gcode(texto, categorias=None, invertir_e=False, quitar_rellen
         "invirtio_e": bool,
         "relleno_removido": int (lineas de infill quitadas),
         "bloques_relleno": int (bloques ;TYPE:FILL/INFILL quitados),
+        "arcos_procesados": int (lineas G2/G3 procesadas en invertir_e),
     }
     """
     if categorias is None:
@@ -164,6 +176,8 @@ def procesar_texto_gcode(texto, categorias=None, invertir_e=False, quitar_rellen
     razones = {}
     for cat in categorias:
         for cmd in ELIMINAR.get(cat, []):
+            if configurar_extrusion and cmd in ("M220", "M221"):
+                continue
             a_eliminar.add(cmd)
             razones[cmd] = RAZONES.get(cmd, "desconocido")
 
@@ -175,6 +189,7 @@ def procesar_texto_gcode(texto, categorias=None, invertir_e=False, quitar_rellen
     por_comando = {}
     lineas_relleno = 0
     bloques_relleno = 0
+    arcos_procesados = 0
 
     modo_e = "ABS"   # estandar Marlin: M82 absoluto
     ultimo_e = 0.0
@@ -237,7 +252,9 @@ def procesar_texto_gcode(texto, categorias=None, invertir_e=False, quitar_rellen
                 linea = _REG_M82.sub("M83", linea)  # neutraliza arrancadas a absoluto
             elif re.match(r"^M83\b", ojos, re.I):
                 pass
-            elif re.match(r"^(?:G0|G1)\b", ojos, re.I):
+            elif re.match(r"^(?:G[0-3])\b", ojos, re.I):
+                if re.match(r"^G[23]\b", ojos, re.I):
+                    arcos_procesados += 1
                 m = _REG_E.search(ojos)
                 if m:
                     valor = float(m.group(1).replace(" ", ""))
@@ -263,9 +280,17 @@ def procesar_texto_gcode(texto, categorias=None, invertir_e=False, quitar_rellen
         i += 1
 
     corregido = "\n".join(salida)
+    prefijo = []
+    if curvas:
+        prefijo.append("G17 ; (plano XY activado para curvas G2/G3)")
+    if configurar_extrusion:
+        prefijo.append("M200 S0 ; (extrusion volumetrica desactivada)")
+        prefijo.append("M220 S100 ; (factor de velocidad al 100%)")
+        prefijo.append("M221 S100 ; (factor de flujo de extrucion al 100%)")
     if invertir_e:
-        forcer = "M83 ; (E forzado a relativo e invertido: maquina extruye con E negativo)\n"
-        corregido = forcer + corregido
+        prefijo.append("M83 ; (E forzado a relativo e invertido: maquina extruye con E negativo)")
+    if prefijo:
+        corregido = "\n".join(prefijo) + "\n" + corregido
     if texto.endswith(("\n", "\r")):
         corregido += "\n"
 
@@ -279,23 +304,30 @@ def procesar_texto_gcode(texto, categorias=None, invertir_e=False, quitar_rellen
         "e_invertidos": e_invertidos,
         "relleno_removido": lineas_relleno,
         "bloques_relleno": bloques_relleno,
+        "arcos_procesados": arcos_procesados,
     }
     return corregido, reporte
 
 
 def construir_correccion(texto, nombre_original="<desconocido>", categorias=None,
-                         invertir_e=False, quitar_relleno=False):
+                         invertir_e=False, quitar_relleno=False, curvas=False,
+                         configurar_extrusion=False):
     """Devuelve (contenido_final_con_cabecera, reporte)."""
-    corregido, reporte = procesar_texto_gcode(texto, categorias, invertir_e, quitar_relleno)
-    cabecera = construir_cabecera(nombre_original, reporte["categorias_activas"], False,
-                                  quitar_relleno)
+    corregido, reporte = procesar_texto_gcode(
+        texto, categorias, invertir_e, quitar_relleno, curvas, configurar_extrusion
+    )
+    cabecera = construir_cabecera(
+        nombre_original, reporte["categorias_activas"], False,
+        quitar_relleno, curvas, configurar_extrusion,
+    )
     contenido = cabecera + "\n" + corregido
     if not texto.endswith(("\n", "\r")):
         contenido = contenido.rstrip("\n") + "\n"
     return contenido, reporte
 
 
-def corregir_archivo(entrada, salida=None, invertir_e=False, quitar_relleno=False):
+def corregir_archivo(entrada, salida=None, invertir_e=False, quitar_relleno=False,
+                     curvas=False, configurar_extrusion=False):
     """Corrige un archivo .gcode en disco (CLI)."""
     entrada = Path(entrada)
     if not entrada.exists():
@@ -307,7 +339,8 @@ def corregir_archivo(entrada, salida=None, invertir_e=False, quitar_relleno=Fals
     datos = entrada.read_bytes()
     texto = decodificar_contenido(datos)
     contenido, reporte = construir_correccion(
-        texto, entrada.name, list(ELIMINAR.keys()), invertir_e, quitar_relleno
+        texto, entrada.name, list(ELIMINAR.keys()), invertir_e, quitar_relleno,
+        curvas, configurar_extrusion,
     )
 
     Path(salida).write_text(contenido, encoding="utf-8")
@@ -328,6 +361,8 @@ def _print_reporte(entrada, salida, reporte):
     if reporte.get("relleno_removido"):
         print("  Relleno quitado:       %d bloques / %d lineas"
               % (reporte["bloques_relleno"], reporte["relleno_removido"]))
+    if reporte.get("arcos_procesados"):
+        print("  Arcos G2/G3:           %d (curvas en plano XY)" % reporte["arcos_procesados"])
     if reporte.get("invirtio_e"):
         print("  E invertido:          %d lineas (modo relativo M83)" % reporte["e_invertidos"])
     print("=" * 62)
@@ -347,24 +382,31 @@ def _print_reporte(entrada, salida, reporte):
 
 
 def main():
+    FLAGS = ("--invertir-e", "--quitar-relleno", "--curvas", "--extrusion")
     if len(sys.argv) < 2:
-        print("Uso: python corregir_gcode.py <archivo_entrada> [archivo_salida] [--invertir-e] [--quitar-relleno]")
+        print("Uso: python corregir_gcode.py <archivo_entrada> [archivo_salida] [FLAGS]")
         print()
-        print("Ejemplo:")
+        print("FLAGS:")
+        print("  --invertir-e       Extrusion a relativa (M83) con E negativo")
+        print("  --quitar-relleno   Borra bloques ;TYPE:FILL/INFILL (infill)")
+        print("  --curvas           Activa G2/G3 (arcos) e inyecta G17")
+        print("  --extrusion        Inyecta M200 S0/M220 S100/M221 S100 y conserva M220/M221")
+        print()
+        print("Ejemplos:")
         print("  python corregir_gcode.py PI3MK2_Fijador.gcode")
-        print("  python corregir_gcode.py entrada.gcode salida_limpia.gcode")
-        print("  python corregir_gcode.py entrada.gcode --invertir-e")
-        print("  python corregir_gcode.py entrada.gcode --quitar-relleno")
-        print("  python corregir_gcode.py entrada.gcode --invertir-e --quitar-relleno")
+        print("  python corregir_gcode.py entrada.gcode --invertir-e --curvas")
+        print("  python corregir_gcode.py entrada.gcode --extrusion --quitar-relleno")
         return 1
 
     invertir_e = "--invertir-e" in sys.argv
     quitar_relleno = "--quitar-relleno" in sys.argv
-    args = [a for a in sys.argv[1:]
-            if a not in ("--invertir-e", "--quitar-relleno")]
+    curvas = "--curvas" in sys.argv
+    configurar_extrusion = "--extrusion" in sys.argv
+    args = [a for a in sys.argv[1:] if a not in FLAGS]
 
     entrada, salida, reporte = corregir_archivo(
-        args[0], args[1] if len(args) > 1 else None, invertir_e, quitar_relleno
+        args[0], args[1] if len(args) > 1 else None, invertir_e, quitar_relleno,
+        curvas, configurar_extrusion,
     )
     _print_reporte(entrada, salida, reporte)
     return 0

@@ -172,6 +172,31 @@ class CorrectorApp:
             style="Panel.TLabel",
             font=("Segoe UI", 8),
         ).pack(anchor="w", padx=12)
+        ttk.Separator(panel_opc).pack(fill="x", padx=8, pady=4)
+        self.var_curvas = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            panel_opc,
+            text="Curvas (G2/G3)",
+            variable=self.var_curvas,
+        ).pack(anchor="w", padx=12, pady=2)
+        ttk.Label(
+            panel_opc,
+            text="Activa G17 (plano XY) e inyecta soporte\npara arcos G2/G3 en Cura",
+            style="Panel.TLabel",
+            font=("Segoe UI", 8),
+        ).pack(anchor="w", padx=12)
+        self.var_extrusion = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            panel_opc,
+            text="Configurar extrusion (M200/M221)",
+            variable=self.var_extrusion,
+        ).pack(anchor="w", padx=12, pady=2)
+        ttk.Label(
+            panel_opc,
+            text="Inyecta M200 S0 + M221 S100 (flujo al 100%)\ny conserva los M220/M221 del archivo",
+            style="Panel.TLabel",
+            font=("Segoe UI", 8),
+        ).pack(anchor="w", padx=12)
         ttk.Button(
             panel_opc,
             text="Marcar / desmarcar todo",
@@ -274,10 +299,12 @@ class CorrectorApp:
             return
         categorias = self._categorias_activas()
         quitar_relleno = self.var_quitar_relleno.get()
-        if not categorias and not quitar_relleno:
+        curvas = self.var_curvas.get()
+        configurar_extrusion = self.var_extrusion.get()
+        if not categorias and not quitar_relleno and not curvas and not configurar_extrusion:
             messagebox.showwarning(
                 "Nada que quitar",
-                "No seleccionaste ninguna categoria a eliminar.",
+                "No seleccionaste ninguna categoria ni opcion.",
             )
             return
 
@@ -288,6 +315,8 @@ class CorrectorApp:
                 categorias,
                 self.var_invertir_e.get(),
                 quitar_relleno,
+                curvas,
+                configurar_extrusion,
             )
         except Exception as e:
             messagebox.showerror("Error al procesar", str(e))
@@ -307,6 +336,10 @@ class CorrectorApp:
             lineas.append(
                 "  Relleno quitado:    %d bloques / %d lineas"
                 % (reporte["bloques_relleno"], reporte["relleno_removido"])
+            )
+        if reporte.get("arcos_procesados"):
+            lineas.append(
+                "  Arcos G2/G3:        %d (curvas en plano XY)" % reporte["arcos_procesados"]
             )
         if reporte.get("invirtio_e"):
             lineas.append(
