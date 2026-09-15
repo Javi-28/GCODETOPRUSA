@@ -178,10 +178,34 @@ class CorrectorApp:
             panel_opc,
             text="Curvas (G2/G3)",
             variable=self.var_curvas,
+            command=self._alternar_tol_arc,
         ).pack(anchor="w", padx=12, pady=2)
         ttk.Label(
             panel_opc,
-            text="Activa G17 (plano XY) e inyecta soporte\npara arcos G2/G3 en Cura",
+            text="Fusiona tramos G1 en arcos G2/G3 (arc welding)\ne inyecta G17 (plano XY). Deja el giro suave\ny el codigo mas compacto.",
+            style="Panel.TLabel",
+            font=("Segoe UI", 8),
+        ).pack(anchor="w", padx=12)
+        frame_tol = ttk.Frame(panel_opc, style="Panel.TFrame")
+        frame_tol.pack(anchor="w", padx=12, pady=(2, 4))
+        ttk.Label(
+            frame_tol, text="Tolerancia (mm):", style="Panel.TLabel",
+            font=("Segoe UI", 8),
+        ).pack(side="left")
+        self.var_tol_arc = tk.StringVar(value="0.10")
+        self.spin_tol_arc = ttk.Spinbox(
+            frame_tol,
+            from_=0.05,
+            to=0.50,
+            increment=0.05,
+            width=5,
+            textvariable=self.var_tol_arc,
+        )
+        self.spin_tol_arc.pack(side="left", padx=4)
+        self.spin_tol_arc.state(["disabled"])
+        ttk.Label(
+            panel_opc,
+            text="Desviacion maxima entre la curva\noriginal y el arco, en milimetros.",
             style="Panel.TLabel",
             font=("Segoe UI", 8),
         ).pack(anchor="w", padx=12)
@@ -317,6 +341,7 @@ class CorrectorApp:
                 quitar_relleno,
                 curvas,
                 configurar_extrusion,
+                self._leer_tol_arc(),
             )
         except Exception as e:
             messagebox.showerror("Error al procesar", str(e))
@@ -340,6 +365,11 @@ class CorrectorApp:
         if reporte.get("arcos_procesados"):
             lineas.append(
                 "  Arcos G2/G3:        %d (curvas en plano XY)" % reporte["arcos_procesados"]
+            )
+        if reporte.get("arcos_soldados"):
+            lineas.append(
+                "  Arcos soldados:     %d (G1 -> G2/G3, %d lineas ahorradas)"
+                % (reporte["arcos_soldados"], reporte["lineas_ahorradas"])
             )
         if reporte.get("invirtio_e"):
             lineas.append(
@@ -402,6 +432,19 @@ class CorrectorApp:
         al_menos_uno = any(var.get() for var, _ in self.check_vars)
         for var, _ in self.check_vars:
             var.set(not al_menos_uno)
+
+    def _alternar_tol_arc(self):
+        if self.var_curvas.get():
+            self.spin_tol_arc.state(["!disabled"])
+        else:
+            self.spin_tol_arc.state(["disabled"])
+
+    def _leer_tol_arc(self):
+        try:
+            valor = float(self.var_tol_arc.get().replace(",", "."))
+        except ValueError:
+            return 0.1
+        return valor if 0.05 <= valor <= 0.5 else 0.1
 
 
 def _agregar_scrollbar(parent, widget_text, row):
