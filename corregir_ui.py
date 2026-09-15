@@ -273,6 +273,11 @@ class CorrectorApp:
         hab = ttk.Frame(marcos_rep, style="Panel.TFrame")
         hab.pack(fill="x", padx=8, pady=(8, 4))
         ttk.Label(hab, text="REPORTE", style="Panel.TLabel").pack(side="left")
+        ttk.Button(
+            hab,
+            text="Copiar reporte",
+            command=self._copiar_reporte,
+        ).pack(side="left", padx=8)
         self.lbl_estado = ttk.Label(
             hab, text="Esperando archivo...", style="Panel.TLabel"
         )
@@ -314,6 +319,11 @@ class CorrectorApp:
     # ---------- API ----------
     def _categorias_activas(self):
         return [cat for var, cat in self.check_vars if var.get()]
+
+    def _copiar_reporte(self):
+        self.clipboard_clear()
+        self.clipboard_append(self.txt_reporte.get("1.0", "end-1c"))
+        self.lbl_estado.config(text="Reporte copiado")
 
     def _set_reporte(self, texto, color=None):
         self.txt_reporte.configure(state="normal", fg=color or COLOR_OK)
