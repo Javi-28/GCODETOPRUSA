@@ -15,3 +15,7 @@ desktop.ini
 
 # Relojes de prueba grandes generados por el corrector
 *_Einvertido.gcode
+
+# Artefactos de compilacion (PyInstaller / Inno Setup / distribucion)
+build/
+distribucion/
