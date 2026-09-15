@@ -180,7 +180,7 @@ def procesar_texto_gcode(texto, categorias=None, invertir_e=False, quitar_rellen
 
     reporte = {
         "total_lineas": total,
-        "lineas_escritas": escritas,
+        "lineas_escritas": len(corregido.splitlines()),
         "eliminadas": eliminadas,
         "por_comando": por_comando,
         "categorias_activas": categorias,
@@ -214,6 +214,7 @@ def construir_correccion(texto, nombre_original="<desconocido>", categorias=None
         quitar_relleno, curvas, configurar_extrusion, unir_rectas,
     )
     contenido = cabecera + "\n" + corregido
+    reporte["lineas_escritas"] = len(contenido.splitlines())
     if not texto.endswith(("\n", "\r")):
         contenido = contenido.rstrip("\n") + "\n"
     return contenido, reporte
