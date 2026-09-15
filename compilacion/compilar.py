@@ -17,7 +17,7 @@ No necesita pip install de dependencias del proyecto (la app solo usa la
 libreria estandar). Solo requiere PyInstaller e Inno Setup instalados.
 
 Uso:
-    py instalador\compilar.py
+    py compilacion\compilar.py
 """
 
 import os
@@ -30,14 +30,14 @@ from pathlib import Path
 from generar_icono import generar_ico
 
 PROYECTO = Path(__file__).resolve().parent.parent
-INSTALADOR = PROYECTO / "instalador"
+COMPILACION = PROYECTO / "compilacion"
 BUILD = PROYECTO / "build"
 PYDIST = BUILD / "dist"
 SPEC = BUILD / "spec"
 WORK = BUILD / "work"
 DIST = PROYECTO / "distribucion"
 ICONO = BUILD / "icono.ico"
-ISS = INSTALADOR / "CorrectorGcode.iss"
+ISS = COMPILACION / "CorrectorGcode.iss"
 
 VERSION = "1.0.0"
 ENTRADA = PROYECTO / "corregir_ui.py"
@@ -152,7 +152,7 @@ def flujo():
     )
 
     # 3) Inno Setup
-    ejecutar("Inno Setup: generando setup.exe", [str(iscc), str(ISS)], INSTALADOR)
+    ejecutar("Inno Setup: generando setup.exe", [str(iscc), str(ISS)], COMPILACION)
 
     setup_real = DIST / SETUP
     if not setup_real.exists():

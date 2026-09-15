@@ -255,19 +255,22 @@ G1 X60.0 E9.0 F1000.0
 ## Interfaz Grafica y Aplicacion
 
 La aplicacion tiene una interfaz grafica (tkinter, sin dependencias) y un
-instalador.
+pipeline de compilacion que genera un instalador profesional de Windows
+(PyInstaller + Inno Setup), de modo que la PC de destino no necesita tener
+Python instalado.
 
 ### Archivos de la aplicacion
 
 | Archivo | Descripcion |
 |---------|-------------|
-| `corregir_gcode.py` | Logica de correccion (reutilizada por CLI, GUI e instalador) |
+| `corregir_gcode.py` | Logica de correccion (reutilizada por CLI, GUI y compilacion) |
 | `corregir_ui.py` | Interfaz grafica (cargar, procesar, previsualizar y guardar) |
-| `run.bat` | Abre la GUI sin instalar nada (modo portable) |
-| `instalador/` | Instalador y desinstalador |
-| `instalador/instalar.py` | Copia la app a `%LOCALAPPDATA%\Programs\CorrectorGcode` y crea accesos en Escritorio y Menu Inicio |
-| `instalador/desinstalar.py` | Elimina la app y los accesos directos |
-| `instalador/Instalar.bat` | Doble clic para instalar |
+| `run.bat` | Abre la GUI desde el codigo sin instalar nada (modo portable) |
+| `compilacion/` | Pipeline de compilacion (PyInstaller + Inno Setup + ZIP) |
+| `compilacion/compilar.py` | Compila el `.exe`, el `setup.exe` y arma el ZIP en `distribucion/` |
+| `compilacion/CorrectorGcode.iss` | Script de Inno Setup (instalador profesional) |
+| `compilacion/generar_icono.py` | Genera el icono de la aplicacion |
+| `distribucion/` | Artefactos finales: `CorrectorGcode-Setup.exe`, `portable/` y `.zip` (generados) |
 
 ### Modo portable (sin instalar)
 
