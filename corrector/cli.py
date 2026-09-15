@@ -9,21 +9,23 @@ from .archivo import corregir_archivo
 logger = logging.getLogger(__name__)
 
 FORMATO_LOG = "%(asctime)s | %(levelname)-7s | %(name)s | %(message)s"
-NIVEL_LOG = logging.INFO
 
 
 def configurar_log():
-    """Configura logging a consola y a logs/CorrectorGcode.log.
+    """Configura logging: consola en INFO y archivo logs/CorrectorGcode.log
+    en DEBUG (detalle completo de cada corrida).
 
     La carpeta 'logs/' se crea junto al script (en fuente) o junto al
     ejecutable (exe/Mac). Devuelve la ruta del archivo de log, o None si la
     carpeta no es escribible.
     """
-    logging.basicConfig(
-        level=NIVEL_LOG,
-        format=FORMATO_LOG,
-        datefmt="%Y-%m-%d %H:%M:%S",
-    )
+    raiz = logging.getLogger()
+    raiz.setLevel(logging.DEBUG)
+    if not any(isinstance(h, logging.StreamHandler) for h in raiz.handlers):
+        consola = logging.StreamHandler()
+        consola.setLevel(logging.INFO)
+        consola.setFormatter(logging.Formatter(FORMATO_LOG, "%Y-%m-%d %H:%M:%S"))
+        raiz.addHandler(consola)
     try:
         if getattr(sys, "frozen", False):
             base = Path(sys.executable).parent
@@ -33,8 +35,9 @@ def configurar_log():
         carpeta.mkdir(exist_ok=True)
         ruta = carpeta / "CorrectorGcode.log"
         handler = logging.FileHandler(ruta, encoding="utf-8")
+        handler.setLevel(logging.DEBUG)
         handler.setFormatter(logging.Formatter(FORMATO_LOG, "%Y-%m-%d %H:%M:%S"))
-        logging.getLogger().addHandler(handler)
+        raiz.addHandler(handler)
         return ruta
     except OSError:
         return None

@@ -25,7 +25,7 @@ from .lineas import es_linea_movimiento, es_tipo_relleno, extraer_comando
 from .cabecera import construir_cabecera
 from .relleno import consumir_bloque_relleno
 from .extrusion import InversorE
-from .curvas import soldar_arcos, RADIO_MAXIMO_DEFECTO, BARRIDO_MINIMO_DEFECTO
+from .curvas import soldar_arcos, RADIO_MAXIMO_DEFECTO, RADIO_MINIMO_DEFECTO, BARRIDO_MINIMO_DEFECTO
 from .procesador import construir_correccion, procesar_texto_gcode
 from .archivo import corregir_archivo
 from .cli import configurar_log, main
@@ -44,6 +44,7 @@ __all__ = [
     "InversorE",
     "soldar_arcos",
     "RADIO_MAXIMO_DEFECTO",
+    "RADIO_MINIMO_DEFECTO",
     "BARRIDO_MINIMO_DEFECTO",
     "construir_correccion",
     "procesar_texto_gcode",

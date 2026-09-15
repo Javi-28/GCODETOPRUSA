@@ -5,18 +5,24 @@ referencia "hace bien curvas" confirma que G2/G3 (incluidos helicoidales
 con Z) funcionan y dan un codigo mas acotado y un giro mas suave.
 """
 
+import logging
 import math
 import re
 
 from .patrones import _REG_E, _REG_F, _REG_G1_XY, _REG_XYZ
 
+logger = logging.getLogger(__name__)
+
 # Limites para que el arc welding NO sea "demasiado sensible": solo se suelda
-# una curva real, no rectas con ruido ni esquinas cuadradas.
-#   radio_maximo  : un radio gigante (ej. >200 mm) significa tramo casi recto
-#                   (cuadrados, paredes planas, escombros de coordenadas).
+# una curva real, no rectas con ruido, esquinas cuadradas ni micro-arcos.
+#   radio_minimo : un radio tiny (ej. <0.2 mm) significa esquina/duplicado con
+#                  ruido (Cura emite hairpins de R~0.005 cuando casi repite puntos).
+#   radio_maximo : un radio gigante (ej. >200 mm) significa tramo casi recto
+#                  (cuadrados, paredes planas, escombros de coordenadas).
 #   barrido_minimo: giro acumulado minimo del arco (rad). Micro-jogges o
-#                   desviaciones de 0.001 mm NO deben convertirse en G2/G3.
+#                  desviaciones de 0.001 mm NO deben convertirse en G2/G3.
 RADIO_MAXIMO_DEFECTO = 200.0
+RADIO_MINIMO_DEFECTO = 0.2
 BARRIDO_MINIMO_DEFECTO = math.radians(15.0)
 
 
@@ -55,25 +61,42 @@ def _circuncentro(pt_a, pt_b, pt_c):
 
 
 def _ajuste_arco(puntos, tolerancia, radio_maximo=RADIO_MAXIMO_DEFECTO,
-                 barrido_minimo=BARRIDO_MINIMO_DEFECTO):
+                 barrido_minimo=BARRIDO_MINIMO_DEFECTO,
+                 radio_minimo=RADIO_MINIMO_DEFECTO):
     """Si TODOS los puntos caen en un circulo dentro de tolerancia y ademas
     el arco es una curva real (radio acotado y giro suficiente), devuelve
     (cx, cy, r, delta_total). delta_total>0 -> G3 (anti-horario), <0 -> G2.
     Devuelve None si son colineales, casi rectos o ruido (demasiado sensible).
     """
+    return _ajuste_arco_det(puntos, tolerancia, radio_maximo,
+                            barrido_minimo, radio_minimo)[0]
+
+
+def _ajuste_arco_det(puntos, tolerancia, radio_maximo, barrido_minimo,
+                     radio_minimo=RADIO_MINIMO_DEFECTO):
+    """Igual que _ajuste_arco pero devuelve (resultado, razon_rechazo).
+
+    'razon_rechazo' es None si encaja, o una cadena legible explicando por
+    que NO se suelda (para los logs DEBUG).
+    """
     n = len(puntos)
     if n < 3:
-        return None
+        return None, "menos de 3 puntos"
     c = _circuncentro(puntos[0], puntos[n // 2], puntos[-1])
     if c is None:
-        return None
+        return None, "colineales (recta exacta)"
     cx, cy = c
     r = math.hypot(puntos[0][0] - cx, puntos[0][1] - cy)
     if r > radio_maximo:                       # casi recto: no es una curva
-        return None
+        return None, "radio %.1f > limite %.1f (tramo casi recto)" % (
+            r, radio_maximo)
+    if r < radio_minimo:                       # micro-arco: esquina con ruido
+        return None, "radio %.3f < minimo %.3f (micro-arco por ruido)" % (
+            r, radio_minimo)
     for px, py in puntos:
         if abs(math.hypot(px - cx, py - cy) - r) > tolerancia:
-            return None
+            return None, ("punto (%.3f, %.3f) se desvia mas de %.3f mm"
+                          % (px, py, tolerancia))
     # Los VERTICES ya estan sobre el circulo; ademas cada segmento recto
     # debe desviarse del arco menos que 'tolerancia' (flecha/sagitta).
     # Sin esto, una esquina cuadrada larga "cabe" en el circulo por sus 3
@@ -82,8 +105,10 @@ def _ajuste_arco(puntos, tolerancia, radio_maximo=RADIO_MAXIMO_DEFECTO,
         x1, y1 = puntos[i]
         x2, y2 = puntos[i + 1]
         dm = math.hypot((x1 + x2) / 2 - cx, (y1 + y2) / 2 - cy)
-        if r - dm > tolerancia:
-            return None
+        sag = r - dm
+        if sag > tolerancia:
+            return None, ("segmento %d corta la esquina %.3f mm"
+                          % (i, sag))
     total = 0.0
     prev = math.atan2(puntos[0][1] - cy, puntos[0][0] - cx)
     for i in range(1, n):
@@ -96,13 +121,19 @@ def _ajuste_arco(puntos, tolerancia, radio_maximo=RADIO_MAXIMO_DEFECTO,
         total += delta
         prev = cur
     if abs(total) < barrido_minimo:            # recta/retroceso: no es un arco
-        return None
-    return cx, cy, r, total
+        return None, ("barrido %.1f grados < minimo %.1f (recta con ruido)"
+                      % (math.degrees(abs(total)),
+                         math.degrees(barrido_minimo)))
+    if abs(total) > 2.0 * math.pi:            # mas de una vuelta: ruido/precision
+        return None, ("giro %.0f grados > 360 (puntos repetidos o ruido)"
+                      % math.degrees(abs(total)))
+    return (cx, cy, r, total), None
 
 
 def soldar_arcos(lineas, tolerancia=0.1, min_seg=3, modo_e_relativo=False,
                  radio_maximo=RADIO_MAXIMO_DEFECTO,
-                 barrido_minimo=BARRIDO_MINIMO_DEFECTO):
+                 barrido_minimo=BARRIDO_MINIMO_DEFECTO,
+                 radio_minimo=RADIO_MINIMO_DEFECTO):
     """Reemplaza tramos de G1 XY consecutivos por un unico G2/G3 R cuando
     encajan en un circulo dentro de 'tolerancia' (mm) Y son curvas reales.
 
@@ -124,8 +155,14 @@ def soldar_arcos(lineas, tolerancia=0.1, min_seg=3, modo_e_relativo=False,
     modo_e = "REL" if modo_e_relativo else "ABS"
     if radio_maximo is None:
         radio_maximo = RADIO_MAXIMO_DEFECTO
+    if radio_minimo is None:
+        radio_minimo = RADIO_MINIMO_DEFECTO
     if barrido_minimo is None:
         barrido_minimo = BARRIDO_MINIMO_DEFECTO
+    logger.debug("Soldar arcos: tolerancia=%.3f min_seg=%d modo_e=%s "
+                 "radio_minimo=%.3f radio_maximo=%.1f barrido_minimo=%.1f grados",
+                 tolerancia, min_seg, modo_e, radio_minimo, radio_maximo,
+                 math.degrees(barrido_minimo))
     salida = []
     soldados = 0
     ahorro = 0
@@ -172,13 +209,21 @@ def soldar_arcos(lineas, tolerancia=0.1, min_seg=3, modo_e_relativo=False,
 
         # ---- buscar el prefix mas largo que encaje en un arco ----
         mejor = None
+        razon = None
         for k in range(min_puntos, len(run) + 1):
             pts = [(p[0]["X"], p[0]["Y"]) for p in run[:k]]
-            aj = _ajuste_arco(pts, tolerancia, radio_maximo, barrido_minimo)
+            aj, razon = _ajuste_arco_det(pts, tolerancia, radio_maximo,
+                                         barrido_minimo, radio_minimo)
             if aj is not None:
                 mejor = (k, aj)
 
         if mejor is None:
+            p0 = run[0][0]
+            pend = run[-1][0]
+            logger.debug("Tramo de %d segmentos (%.2f %.2f -> %.2f %.2f) "
+                         "NO se suelda: %s",
+                         len(run), p0.get("X", 0), p0.get("Y", 0),
+                         pend.get("X", 0), pend.get("Y", 0), razon)
             salida.append(linea)
             i += 1
             continue
@@ -188,6 +233,10 @@ def soldar_arcos(lineas, tolerancia=0.1, min_seg=3, modo_e_relativo=False,
         frun = run[consumidos - 1][2]
 
         sentido = "G3" if delta_total > 0 else "G2"
+        logger.debug("Se suelda tramo de %d segmentos -> %s R=%.3f "
+                     "barrido=%.1f grados, %d lineas ahorradas",
+                     consumidos, sentido, r, math.degrees(abs(delta_total)),
+                     consumidos - 1)
         partes = [sentido]
         partes.append("X" + _fmt(fin.get("X")))
         partes.append("Y" + _fmt(fin.get("Y")))
@@ -207,4 +256,6 @@ def soldar_arcos(lineas, tolerancia=0.1, min_seg=3, modo_e_relativo=False,
         ahorro += consumidos - 1
         i += consumidos
 
+    logger.debug("Resumen arc welding: %d arcos soldados, %d lineas ahorradas",
+                 soldados, ahorro)
     return salida, {"arcos_soldados": soldados, "lineas_ahorradas": ahorro}
