@@ -8,6 +8,7 @@ from .extrusion import InversorE
 from .lineas import es_tipo_relleno, extraer_comando
 from .relleno import consumir_bloque_relleno
 from .curvas import soldar_arcos
+from .rectas import unir_rectas as _unir_rectas
 
 logger = logging.getLogger(__name__)
 
@@ -15,7 +16,8 @@ logger = logging.getLogger(__name__)
 def procesar_texto_gcode(texto, categorias=None, invertir_e=False, quitar_relleno=False,
                          curvas=False, configurar_extrusion=False,
                          tolerancia_arc=0.1, min_seg_arc=3,
-                         radio_maximo_arc=None, barrido_minimo_arc=None):
+                         radio_maximo_arc=None, barrido_minimo_arc=None,
+                         unir_rectas=False, tolerancia_recta=0.05):
     """Corrige G-code en una cadena de texto.
 
     categorias: lista con claves de ELIMINAR (por defecto todas).
@@ -37,6 +39,11 @@ def procesar_texto_gcode(texto, categorias=None, invertir_e=False, quitar_rellen
     configurar_extrusion: si True inyecta M200 S0 (desactivar volumetrico),
         M220 S100 (velocidad al 100%) y M221 S100 (flujo al 100%) al
         inicio, y NO elimina los comandos M220/M221 del archivo original.
+    unir_rectas: si True colapsa los tramos de G1 XY consecutivos y
+        colineales (paredes subdivididas por Cura) a un unico G1, ANTES del
+        arc welding. Es independiente de 'curvas': puede usarse solo o junto.
+        'tolerancia_recta' es la desviacion perpendicular maxima (mm) de los
+        puntos intermedios respecto a la recta que une extremos (default 0.05).
 
     Devuelve (texto_corregido, reporte) donde reporte es un dict:
     {
@@ -51,6 +58,8 @@ def procesar_texto_gcode(texto, categorias=None, invertir_e=False, quitar_rellen
         "arcos_procesados": int (G2/G3 preexistentes procesados en invertir_e),
         "arcos_soldados": int (tramos G1 fusionados a G2/G3),
         "lineas_ahorradas": int (lineas G1 reemplazadas por los arcos),
+        "rectas_unidas": int (tramos G1 colineales colapsados a un solo G1),
+        "lineas_ahorradas_rectas": int (lineas G1 reemplazadas por las rectas),
     }
     """
     if categorias is None:
@@ -58,9 +67,9 @@ def procesar_texto_gcode(texto, categorias=None, invertir_e=False, quitar_rellen
 
     a_eliminar, razones = clasificar_eliminables(categorias, configurar_extrusion)
     logger.info("Procesando %d lineas: categorias=%s invertir_e=%s "
-                "quitar_relleno=%s curvas=%s extrusion=%s",
+                "quitar_relleno=%s curvas=%s extrusion=%s unir_rectas=%s",
                 len(texto.splitlines()), len(categorias), invertir_e,
-                quitar_relleno, curvas, configurar_extrusion)
+                quitar_relleno, curvas, configurar_extrusion, unir_rectas)
 
     lineas = texto.splitlines()
     salida = []
@@ -121,6 +130,16 @@ def procesar_texto_gcode(texto, categorias=None, invertir_e=False, quitar_rellen
         escritas += 1
         i += 1
 
+    # ---- Unir rectas (F1): colapsar paredes subdivididas antes de curvas ----
+    rectas_unidas = 0
+    lineas_ahorradas_rectas = 0
+    if unir_rectas:
+        salida, info_rectas = _unir_rectas(
+            salida, tolerancia_recta, modo_e_relativo=bool(inversor),
+        )
+        rectas_unidas = info_rectas["rectas_unidas"]
+        lineas_ahorradas_rectas = info_rectas["lineas_ahorradas_rectas"]
+
     # ---- Arc welding (curvas): fusionar tramos G1 poligonales en G2/G3 ----
     arcos_soldados = 0
     lineas_ahorradas = 0
@@ -153,9 +172,11 @@ def procesar_texto_gcode(texto, categorias=None, invertir_e=False, quitar_rellen
     arcos_procesados = inversor.arcos if inversor else 0
 
     logger.info("Resultado: %d eliminadas / relleno %d bloques-%d lineas / "
-                "E invertido %d / arcos soldados %d (%d ahorradas)",
+                "E invertido %d / rectas unidas %d (%d ahorradas) / "
+                "arcos soldados %d (%d ahorradas)",
                 len(eliminadas), bloques_relleno, lineas_relleno,
-                e_invertidos, arcos_soldados, lineas_ahorradas)
+                e_invertidos, rectas_unidas, lineas_ahorradas_rectas,
+                arcos_soldados, lineas_ahorradas)
 
     reporte = {
         "total_lineas": total,
@@ -170,6 +191,8 @@ def procesar_texto_gcode(texto, categorias=None, invertir_e=False, quitar_rellen
         "arcos_procesados": arcos_procesados,
         "arcos_soldados": arcos_soldados,
         "lineas_ahorradas": lineas_ahorradas,
+        "rectas_unidas": rectas_unidas,
+        "lineas_ahorradas_rectas": lineas_ahorradas_rectas,
     }
     return corregido, reporte
 
@@ -178,16 +201,17 @@ def construir_correccion(texto, nombre_original="<desconocido>", categorias=None
                          invertir_e=False, quitar_relleno=False, curvas=False,
                          configurar_extrusion=False, tolerancia_arc=0.1,
                          min_seg_arc=3, radio_maximo_arc=None,
-                         barrido_minimo_arc=None):
+                         barrido_minimo_arc=None, unir_rectas=False,
+                         tolerancia_recta=0.05):
     """Devuelve (contenido_final_con_cabecera, reporte)."""
     corregido, reporte = procesar_texto_gcode(
         texto, categorias, invertir_e, quitar_relleno, curvas,
         configurar_extrusion, tolerancia_arc, min_seg_arc,
-        radio_maximo_arc, barrido_minimo_arc,
+        radio_maximo_arc, barrido_minimo_arc, unir_rectas, tolerancia_recta,
     )
     cabecera = cabecera_mod.construir_cabecera(
         nombre_original, reporte["categorias_activas"], False,
-        quitar_relleno, curvas, configurar_extrusion,
+        quitar_relleno, curvas, configurar_extrusion, unir_rectas,
     )
     contenido = cabecera + "\n" + corregido
     if not texto.endswith(("\n", "\r")):

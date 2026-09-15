@@ -25,6 +25,13 @@ RADIO_MAXIMO_DEFECTO = 200.0
 RADIO_MINIMO_DEFECTO = 0.2
 BARRIDO_MINIMO_DEFECTO = math.radians(15.0)
 
+# F2 - Densidad de curva: un tramo solo es candidato a arco si hay una ventana
+# deslizante con 'MIN_SEG_DENSIDAD' movimientos consecutivos recorriendo a lo
+# sumo 'DISTANCIA_DENSIDAD_DEFECTO' mm. Las curvas de Cura (resolucion fina)
+# generan decenas de pasos en 2 mm; una pared o un poligono ralo no lo hace.
+DISTANCIA_DENSIDAD_DEFECTO = 2.0
+MIN_SEG_DENSIDAD = 3
+
 
 def _fmt(v, dec=6):
     """Formatea un float sin ceros a la derecha (ej. 25.281546, 2400)."""
@@ -130,10 +137,35 @@ def _ajuste_arco_det(puntos, tolerancia, radio_maximo, barrido_minimo,
     return (cx, cy, r, total), None
 
 
+def _hay_densidad(puntos, distancia=DISTANCIA_DENSIDAD_DEFECTO,
+                  min_seg=MIN_SEG_DENSIDAD):
+    """True si existe una ventana deslizante con 'min_seg' movimientos
+    consecutivos que recorren a lo sumo 'distancia' mm (F2: probable curva).
+
+    Las curvas reales de Cura son densas (muchos G1 cortos en pocos mm); las
+    paredes unidas ya no llegan aqui y un poligono ralo (tramos largos) no
+    tiene 3+ movimientos dentro de la ventana.
+    """
+    if len(puntos) < min_seg + 1:
+        return False
+    for i in range(len(puntos) - min_seg):
+        largo = 0.0
+        for j in range(i, i + min_seg):
+            x1, y1 = puntos[j]
+            x2, y2 = puntos[j + 1]
+            largo += math.hypot(x2 - x1, y2 - y1)
+            if largo > distancia:
+                break
+        if largo <= distancia:
+            return True
+    return False
+
+
 def soldar_arcos(lineas, tolerancia=0.1, min_seg=3, modo_e_relativo=False,
                  radio_maximo=RADIO_MAXIMO_DEFECTO,
                  barrido_minimo=BARRIDO_MINIMO_DEFECTO,
-                 radio_minimo=RADIO_MINIMO_DEFECTO):
+                 radio_minimo=RADIO_MINIMO_DEFECTO,
+                 densidad_distancia=DISTANCIA_DENSIDAD_DEFECTO):
     """Reemplaza tramos de G1 XY consecutivos por un unico G2/G3 R cuando
     encajan en un circulo dentro de 'tolerancia' (mm) Y son curvas reales.
 
@@ -160,9 +192,11 @@ def soldar_arcos(lineas, tolerancia=0.1, min_seg=3, modo_e_relativo=False,
     if barrido_minimo is None:
         barrido_minimo = BARRIDO_MINIMO_DEFECTO
     logger.debug("Soldar arcos: tolerancia=%.3f min_seg=%d modo_e=%s "
-                 "radio_minimo=%.3f radio_maximo=%.1f barrido_minimo=%.1f grados",
+                 "radio_minimo=%.3f radio_maximo=%.1f barrido_minimo=%.1f "
+                 "grados densidad=%d mov en %.1f mm",
                  tolerancia, min_seg, modo_e, radio_minimo, radio_maximo,
-                 math.degrees(barrido_minimo))
+                 math.degrees(barrido_minimo), MIN_SEG_DENSIDAD,
+                 densidad_distancia)
     salida = []
     soldados = 0
     ahorro = 0
@@ -203,6 +237,22 @@ def soldar_arcos(lineas, tolerancia=0.1, min_seg=3, modo_e_relativo=False,
             idx += 1
 
         if len(run) < min_puntos:
+            salida.append(linea)
+            i += 1
+            continue
+
+        # F2: si no hay ventana de 3+ movimientos en <= 'densidad_distancia' mm,
+        # es un poligono o pared rala, no una curva.
+        pts_run = [(p[0]["X"], p[0]["Y"]) for p in run]
+        if not _hay_densidad(pts_run, densidad_distancia):
+            p0 = run[0][0]
+            pend = run[-1][0]
+            logger.debug("Tramo de %d segmentos (%.2f %.2f -> %.2f %.2f) "
+                         "NO se suelda: no hay ventana de %d movimientos en "
+                         "%.1f mm (poligono ralo)",
+                         len(run), p0.get("X", 0), p0.get("Y", 0),
+                         pend.get("X", 0), pend.get("Y", 0),
+                         MIN_SEG_DENSIDAD, densidad_distancia)
             salida.append(linea)
             i += 1
             continue

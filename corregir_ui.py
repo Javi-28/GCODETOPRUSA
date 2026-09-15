@@ -213,6 +213,42 @@ class CorrectorApp:
             style="Panel.TLabel",
             font=("Segoe UI", 8),
         ).pack(anchor="w", padx=12)
+        self.var_unir_rectas = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            panel_opc,
+            text="Unir rectas (G1 colineales)",
+            variable=self.var_unir_rectas,
+            command=self._alternar_tol_recta,
+        ).pack(anchor="w", padx=12, pady=2)
+        ttk.Label(
+            panel_opc,
+            text="Colapsa las paredes subdivididas de Cura\nen un solo G1. Independiente de curvas.",
+            style="Panel.TLabel",
+            font=("Segoe UI", 8),
+        ).pack(anchor="w", padx=12)
+        frame_tol_recta = ttk.Frame(panel_opc, style="Panel.TFrame")
+        frame_tol_recta.pack(anchor="w", padx=12, pady=(2, 4))
+        ttk.Label(
+            frame_tol_recta, text="Tolerancia (mm):", style="Panel.TLabel",
+            font=("Segoe UI", 8),
+        ).pack(side="left")
+        self.var_tol_recta = tk.StringVar(value="0.05")
+        self.spin_tol_recta = ttk.Spinbox(
+            frame_tol_recta,
+            from_=0.02,
+            to=0.25,
+            increment=0.01,
+            width=5,
+            textvariable=self.var_tol_recta,
+        )
+        self.spin_tol_recta.pack(side="left", padx=4)
+        self.spin_tol_recta.state(["disabled"])
+        ttk.Label(
+            panel_opc,
+            text="Desvio perpendicular maximo de los\npuntos intermedios a la recta.",
+            style="Panel.TLabel",
+            font=("Segoe UI", 8),
+        ).pack(anchor="w", padx=12)
         self.var_extrusion = tk.BooleanVar(value=False)
         ttk.Checkbutton(
             panel_opc,
@@ -331,7 +367,9 @@ class CorrectorApp:
         quitar_relleno = self.var_quitar_relleno.get()
         curvas = self.var_curvas.get()
         configurar_extrusion = self.var_extrusion.get()
-        if not categorias and not quitar_relleno and not curvas and not configurar_extrusion:
+        unir_rectas = self.var_unir_rectas.get()
+        if not categorias and not quitar_relleno and not curvas \
+                and not configurar_extrusion and not unir_rectas:
             messagebox.showwarning(
                 "Nada que quitar",
                 "No seleccionaste ninguna categoria ni opcion.",
@@ -348,15 +386,18 @@ class CorrectorApp:
                 curvas,
                 configurar_extrusion,
                 self._leer_tol_arc(),
+                unir_rectas=unir_rectas,
+                tolerancia_recta=self._leer_tol_recta(),
             )
         except Exception as e:
             logger.exception("Error al procesar: %s", e)
             messagebox.showerror("Error al procesar", str(e))
             return
 
-        logger.info("Procesado OK: %d lineas totales, %d eliminadas, %d soldadas",
+        logger.info("Procesado OK: %d lineas totales, %d eliminadas, %d soldadas, "
+                    "%d rectas unidas",
                     reporte["total_lineas"], len(reporte["eliminadas"]),
-                    reporte.get("arcos_soldados", 0))
+                    reporte.get("arcos_soldados", 0), reporte.get("rectas_unidas", 0))
 
         self.corregido_actual = contenido
         self._set_corregido(contenido)
@@ -381,6 +422,11 @@ class CorrectorApp:
             lineas.append(
                 "  Arcos soldados:     %d (G1 -> G2/G3, %d lineas ahorradas)"
                 % (reporte["arcos_soldados"], reporte["lineas_ahorradas"])
+            )
+        if reporte.get("rectas_unidas"):
+            lineas.append(
+                "  Rectas unidas:      %d (G1 colineales colapsados, %d lineas ahorradas)"
+                % (reporte["rectas_unidas"], reporte["lineas_ahorradas_rectas"])
             )
         if reporte.get("invirtio_e"):
             lineas.append(
@@ -450,12 +496,25 @@ class CorrectorApp:
         else:
             self.spin_tol_arc.state(["disabled"])
 
+    def _alternar_tol_recta(self):
+        if self.var_unir_rectas.get():
+            self.spin_tol_recta.state(["!disabled"])
+        else:
+            self.spin_tol_recta.state(["disabled"])
+
     def _leer_tol_arc(self):
         try:
             valor = float(self.var_tol_arc.get().replace(",", "."))
         except ValueError:
             return 0.1
         return valor if 0.05 <= valor <= 0.5 else 0.1
+
+    def _leer_tol_recta(self):
+        try:
+            valor = float(self.var_tol_recta.get().replace(",", "."))
+        except ValueError:
+            return 0.05
+        return valor if 0.02 <= valor <= 0.25 else 0.05
 
 
 def _agregar_scrollbar(parent, widget_text, row):

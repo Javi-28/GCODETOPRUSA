@@ -62,6 +62,9 @@ def _print_reporte(entrada, salida, reporte, ruta_log=None):
     if reporte.get("arcos_soldados"):
         print("  Arcos soldados:       %d (G1 -> G2/G3, %d lineas ahorradas)"
               % (reporte["arcos_soldados"], reporte["lineas_ahorradas"]))
+    if reporte.get("rectas_unidas"):
+        print("  Rectas unidas:        %d (G1 colineales colapsados, %d lineas ahorradas)"
+              % (reporte["rectas_unidas"], reporte["lineas_ahorradas_rectas"]))
     if reporte.get("invirtio_e"):
         print("  E invertido:          %d lineas (modo relativo M83)" % reporte["e_invertidos"])
     print("=" * 62)
@@ -83,7 +86,8 @@ def _print_reporte(entrada, salida, reporte, ruta_log=None):
 
 
 def main():
-    FLAGS = ("--invertir-e", "--quitar-relleno", "--curvas", "--extrusion")
+    FLAGS = ("--invertir-e", "--quitar-relleno", "--curvas", "--extrusion",
+             "--unir-rectas")
     if len(sys.argv) < 2:
         print("Uso: python corregir_gcode.py <archivo_entrada> [archivo_salida] [FLAGS]")
         print()
@@ -96,10 +100,14 @@ def main():
         print("                     Solo convierte curvas reales: rectas y cuadrados")
         print("                     (radio gigante o giro minimo) quedan como G1.")
         print("  --extrusion        Inyecta M200 S0/M220 S100/M221 S100 y conserva M220/M221")
+        print("  --unir-rectas      Colapsa lineas G1 colineales de Cura a un solo G1")
+        print("                     (paredes subdivididas). Independiente de --curvas.")
+        print("                     Opcional: --tol-recta=NUM desvio maximo en mm (default 0.05)")
         print()
         print("Ejemplos:")
         print("  python corregir_gcode.py PI3MK2_Fijador.gcode --curvas --invertir-e")
         print("  python corregir_gcode.py entrada.gcode --curvas --tol-arc=0.05")
+        print("  python corregir_gcode.py entrada.gcode --unir-rectas")
         print("  python corregir_gcode.py entrada.gcode --extrusion --quitar-relleno")
         return 1
 
@@ -108,22 +116,34 @@ def main():
     quitar_relleno = "--quitar-relleno" in sys.argv
     curvas = "--curvas" in sys.argv
     configurar_extrusion = "--extrusion" in sys.argv
+    unir_rectas = "--unir-rectas" in sys.argv
 
     tolerancia_arc = 0.1
+    tolerancia_recta = 0.05
     for a in sys.argv:
         if a.startswith("--tol-arc="):
             try:
                 tolerancia_arc = float(a.split("=", 1)[1])
             except ValueError:
                 pass
+        elif a.startswith("--tol-recta="):
+            try:
+                tolerancia_recta = float(a.split("=", 1)[1])
+            except ValueError:
+                pass
 
-    args = [a for a in sys.argv[1:] if a not in FLAGS and not a.startswith("--tol-arc=")]
+    args = [a for a in sys.argv[1:]
+            if a not in FLAGS and not a.startswith("--tol-arc=")
+            and not a.startswith("--tol-recta=")]
 
-    logger.info("CLI: entrada=%s flags(i=%s,relleno=%s,curvas=%s,extrusion=%s)",
-                args[0], invertir_e, quitar_relleno, curvas, configurar_extrusion)
+    logger.info("CLI: entrada=%s flags(i=%s,relleno=%s,curvas=%s,extrusion=%s,"
+                "unir_rectas=%s)",
+                args[0], invertir_e, quitar_relleno, curvas, configurar_extrusion,
+                unir_rectas)
     entrada, salida, reporte = corregir_archivo(
         args[0], args[1] if len(args) > 1 else None, invertir_e, quitar_relleno,
-        curvas, configurar_extrusion, tolerancia_arc,
+        curvas, configurar_extrusion, tolerancia_arc, unir_rectas=unir_rectas,
+        tolerancia_recta=tolerancia_recta,
     )
     _print_reporte(entrada, salida, reporte, ruta_log)
     return 0

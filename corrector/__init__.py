@@ -11,6 +11,7 @@ Modulos:
     relleno     - quitar relleno interior (infill).
     extrusion   - inversion de E (relativo/negativo) para la maquina.
     curvas      - arc welding: fusiona tramos G1 en arcos G2/G3.
+    rectas      - unir rectas colineales: colapsa una polilinea G1 de Cura.
     procesador  - orquestacion del pipeline (procesar_texto_gcode).
     archivo     - corregir_archivo (lectura/escritura en disco).
     cli         - interfaz de linea de comandos (main, reporte).
@@ -26,6 +27,7 @@ from .cabecera import construir_cabecera
 from .relleno import consumir_bloque_relleno
 from .extrusion import InversorE
 from .curvas import soldar_arcos, RADIO_MAXIMO_DEFECTO, RADIO_MINIMO_DEFECTO, BARRIDO_MINIMO_DEFECTO
+from .rectas import unir_rectas, TOLERANCIA_RECTA_DEFECTO
 from .procesador import construir_correccion, procesar_texto_gcode
 from .archivo import corregir_archivo
 from .cli import configurar_log, main
@@ -46,6 +48,8 @@ __all__ = [
     "RADIO_MAXIMO_DEFECTO",
     "RADIO_MINIMO_DEFECTO",
     "BARRIDO_MINIMO_DEFECTO",
+    "unir_rectas",
+    "TOLERANCIA_RECTA_DEFECTO",
     "construir_correccion",
     "procesar_texto_gcode",
     "corregir_archivo",

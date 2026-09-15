@@ -12,7 +12,8 @@ logger = logging.getLogger(__name__)
 
 def corregir_archivo(entrada, salida=None, invertir_e=False, quitar_relleno=False,
                      curvas=False, configurar_extrusion=False,
-                     tolerancia_arc=0.1, min_seg_arc=3):
+                     tolerancia_arc=0.1, min_seg_arc=3, unir_rectas=False,
+                     tolerancia_recta=0.05):
     """Corrige un archivo .gcode en disco (CLI)."""
     entrada = Path(entrada)
     if not entrada.exists():
@@ -27,6 +28,7 @@ def corregir_archivo(entrada, salida=None, invertir_e=False, quitar_relleno=Fals
     contenido, reporte = construir_correccion(
         texto, entrada.name, list(ELIMINAR.keys()), invertir_e, quitar_relleno,
         curvas, configurar_extrusion, tolerancia_arc, min_seg_arc,
+        unir_rectas=unir_rectas, tolerancia_recta=tolerancia_recta,
     )
 
     Path(salida).write_text(contenido, encoding="utf-8")

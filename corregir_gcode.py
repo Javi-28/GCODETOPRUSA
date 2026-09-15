@@ -11,7 +11,7 @@ CLI, la GUI y scripts antiguos.
 Uso CLI:
     python corregir_gcode.py <archivo_entrada> [archivo_salida] [--invertir-e]
                              [--quitar-relleno] [--curvas] [--extrusion]
-                             [--tol-arc=NUM]
+                             [--tol-arc=NUM] [--unir-rectas] [--tol-recta=NUM]
 """
 
 import sys
@@ -23,6 +23,7 @@ from corrector import (
     RADIO_MAXIMO_DEFECTO,
     RADIO_MINIMO_DEFECTO,
     TODOS_ELIMINAR,
+    TOLERANCIA_RECTA_DEFECTO,
     clasificar_eliminables,
     configurar_log,
     construir_cabecera,
@@ -35,6 +36,7 @@ from corrector import (
     extraer_comando,
     procesar_texto_gcode,
     soldar_arcos,
+    unir_rectas,
     main,
 )
 
@@ -45,6 +47,7 @@ __all__ = [
     "RADIO_MAXIMO_DEFECTO",
     "RADIO_MINIMO_DEFECTO",
     "TODOS_ELIMINAR",
+    "TOLERANCIA_RECTA_DEFECTO",
     "clasificar_eliminables",
     "configurar_log",
     "construir_cabecera",
@@ -57,6 +60,7 @@ __all__ = [
     "extraer_comando",
     "procesar_texto_gcode",
     "soldar_arcos",
+    "unir_rectas",
     "main",
 ]
 

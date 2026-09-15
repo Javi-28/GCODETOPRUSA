@@ -51,6 +51,7 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 [Files]
 Source: "..\build\dist\CorrectorGcode.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\ANALISIS.md"; DestDir: "{app}\Documentacion"; Flags: ignoreversion
+Source: "..\README.md"; DestDir: "{app}\Documentacion"; Flags: ignoreversion
 
 [Icons]
 Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
